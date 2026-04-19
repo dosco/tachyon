@@ -1,0 +1,51 @@
+# tachyon sample config — copy to config.yaml and edit.
+listen: ":8080"
+
+upstreams:
+  api:
+    addrs: ["127.0.0.1:9000"]
+
+  # Multi-address pool with all the options turned on.
+  backend:
+    addrs:
+      - "10.0.0.1:9000"
+      - "10.0.0.2:9000"
+      - "10.0.0.3:9000"
+
+    # "p2c_ewma" picks two random addresses and routes to the one with
+    # lower latency. Default is "rr" (round-robin).
+    lb_policy: "p2c_ewma"
+
+    # Drop an address after this many consecutive 5xx or connection errors.
+    # It comes back automatically once it starts responding again.
+    outlier_detection:
+      consecutive_5xx: 5
+      ejection_duration: "30s"
+
+    # Actively probe each address; pull it from rotation if it goes down.
+    health_check:
+      interval: "10s"
+      path: "/health"
+
+    # Retry GET/HEAD once on connection failure, bounded by a token budget.
+    retry_budget:
+      retry_percent: 20
+      min_tokens: 3
+
+routes:
+  # Exact host + longest-prefix-match path. Order doesn't matter.
+  - host: "api.example.com"
+    path: "/"
+    upstream: "api"
+
+  # Weighted canary split.
+  # - host: "api.example.com"
+  #   path: "/"
+  #   upstreams:
+  #     - { name: "api",    weight: 95 }
+  #     - { name: "canary", weight: 5  }
+
+  # Wildcard host catches everything else.
+  - host: "*"
+    path: "/"
+    upstream: "backend"

@@ -68,7 +68,7 @@ go build -o tachyon ./cmd/tachyon
 ./tachyon -config config.yaml
 ```
 
-With a two-line config:
+`config.yaml`:
 
 ```yaml
 listen: ":8080"
@@ -78,12 +78,7 @@ routes:
   - { host: "*", path: "/", upstream: "api" }
 ```
 
-That's a working reverse proxy. On Linux, omit `-workers` and tachyon forks
-one process per core automatically.
-
-Add TLS with `-tls-listen :8443`. Watch metrics at `-debug-addr 127.0.0.1:6060`.
-Reload config with `kill -HUP`. Drain gracefully with `kill -TERM`. It all
-just works.
+That's it. See [`config.sample.yaml`](config.sample.yaml) for TLS, load balancing, health checks, and everything else.
 
 ## The boring but important stuff
 
