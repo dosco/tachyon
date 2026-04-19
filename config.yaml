@@ -1,5 +1,5 @@
 # tachyon bench config — production-tuned to match nginx's upstream pool size.
-listen: ":8080"
+listen: ":8081"
 
 # One route per host/path-prefix. Longest prefix wins.
 routes:
@@ -14,6 +14,6 @@ routes:
 # per worker process. 512 matches nginx's `keepalive 512;` per-worker.
 upstreams:
   pool-a:
-    addrs: ["127.0.0.1:9000"]
+    addrs: ["127.0.0.1:8080"]
     idle_per_host: 512
     connect_timeout: "1s"

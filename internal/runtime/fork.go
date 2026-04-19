@@ -17,9 +17,12 @@ const EnvWorkerID = "TACHYON_WORKER_ID"
 // EnvWorkerCount is the total worker count, for logging.
 const EnvWorkerCount = "TACHYON_WORKER_COUNT"
 
+// CanFork reports whether multi-process worker forking is supported on this
+// platform. It is true on Linux and false everywhere else.
+func CanFork() bool { return true }
+
 // ForkWorkers re-execs the current binary n times with EnvWorkerID set on
-// each child. Returns after all children have exited. On non-Linux this
-// symbol is absent; the main program runs inline.
+// each child. Returns after all children have exited.
 func ForkWorkers(n int) error {
 	children := make([]*exec.Cmd, 0, n)
 	self, err := os.Executable()

@@ -9,8 +9,12 @@ const (
 	EnvWorkerCount = "TACHYON_WORKER_COUNT"
 )
 
-// ForkWorkers is only implemented on Linux. On other platforms the main
-// program runs inline and this returns an error if called.
+// CanFork reports whether multi-process worker forking is supported.
+// Always false on non-Linux; tachyon runs as a single process.
+func CanFork() bool { return false }
+
+// ForkWorkers is not implemented on non-Linux. Never called because
+// CanFork() returns false.
 func ForkWorkers(n int) error {
-	return errors.New("runtime: worker fork requires linux; run with -workers=1")
+	return errors.New("runtime: worker fork requires linux")
 }
