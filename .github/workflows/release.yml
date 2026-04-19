@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Verify release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+      - name: Integration tests
+        run: go test -tags integration ./e2e/
+
+      - name: Regenerate intent package
+        run: go run ./cmd/tachyon intent verify intent/*.intent
+
+      - name: Check generated drift
+        run: git diff --exit-code
+
+  binaries:
+    name: Build release binaries
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            asset_suffix: linux-amd64
+          - goos: linux
+            goarch: arm64
+            asset_suffix: linux-arm64
+          - goos: darwin
+            goarch: amd64
+            asset_suffix: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            asset_suffix: darwin-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w" -o "dist/tachyon-${{ matrix.asset_suffix }}" ./cmd/tachyon
+
+      - name: Package archive
+        run: |
+          cd dist
+          tar -czf "tachyon-${{ matrix.asset_suffix }}.tar.gz" "tachyon-${{ matrix.asset_suffix }}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tachyon-${{ matrix.asset_suffix }}
+          path: dist/tachyon-${{ matrix.asset_suffix }}.tar.gz
+
+  publish:
+    name: Publish GitHub release
+    needs: binaries
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/**/*.tar.gz
