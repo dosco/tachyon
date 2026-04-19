@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Kill tachyon parent AND forked workers. Use pkill + fuser to make sure.
+pkill -9 -f 'tachyon' 2>/dev/null || true
+sleep 0.3
+fuser -k 8080/tcp 2>/dev/null || true
+sleep 0.2

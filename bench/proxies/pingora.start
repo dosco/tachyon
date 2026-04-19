@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Pingora bench proxy. The binary lives at ~/bin/pingora-bench-proxy so it
+# survives gcloud-sync.sh (which overwrites ~/tachyon but not ~/bin).
+# Build it once with: cd ~/tachyon/bench/pingora && cargo build --release && cp target/release/pingora-bench-proxy ~/bin/
+set -euo pipefail
+BIN=~/bin/pingora-bench-proxy
+if [ ! -x "$BIN" ]; then
+  echo "pingora not built; run:" >&2
+  echo "  cd ~/tachyon/bench/pingora && source ~/.cargo/env && cargo build --release && mkdir -p ~/bin && cp target/release/pingora-bench-proxy ~/bin/" >&2
+  exit 1
+fi
+pkill -f 'pingora-bench-proxy' 2>/dev/null || true
+sleep 0.3
+"$BIN" &
+for _ in $(seq 1 50); do
+  ss -tlnp 2>/dev/null | grep -q ':8080' && exit 0
+  sleep 0.2
+done
+echo "pingora did not open :8080" >&2; exit 1

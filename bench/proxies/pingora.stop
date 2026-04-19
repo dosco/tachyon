@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+pkill -f 'pingora-bench-proxy' 2>/dev/null || true

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Launch tachyon with the io_uring event loop.
+set -euo pipefail
+cd ~/tachyon
+pkill -f '^./tachyon' 2>/dev/null || true
+sleep 0.2
+# Match nginx/pingora: one worker per CPU.
+N=$(nproc)
+./tachyon -config config.yaml -workers "$N" -uring > /tmp/tachyon-uring.log 2>&1 &
+# Wait for port bind.
+for _ in $(seq 1 50); do
+  ss -tlnp 2>/dev/null | grep -q ':8080' && break
+  sleep 0.05
+done

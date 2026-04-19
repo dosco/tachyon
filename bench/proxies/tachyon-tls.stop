@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+pkill -f '^./tachyon' 2>/dev/null || true

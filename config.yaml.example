@@ -1,0 +1,75 @@
+# tachyon example config
+listen: ":8080"
+
+# One route per host/path-prefix. Longest prefix wins.
+routes:
+  - host: "example.com"
+    path: "/"
+    upstream: "pool-a"
+
+  - host: "*"               # wildcard host
+    path: "/"
+    upstream: "pool-b"
+
+  # Multi-upstream weighted example. Exactly one of `upstream:` or
+  # `upstreams:` must be set per route. Weights are relative; a weight
+  # of 0 is normalised to 1. A single-entry `upstreams:` list collapses
+  # back to the single-upstream fast path at match time (no rand call).
+  # - host: "canary.example.com"
+  #   path: "/"
+  #   upstreams:
+  #     - name: "pool-a"
+  #       weight: 95
+  #     - name: "pool-b"
+  #       weight: 5
+
+# Upstream pools. tachyon keeps `idle_per_host` warm connections per upstream
+# per worker process.
+upstreams:
+  pool-a:
+    addrs: ["127.0.0.1:9000"]
+    idle_per_host: 16
+    connect_timeout: "1s"
+
+  pool-b:
+    addrs: ["127.0.0.1:9000"]
+    idle_per_host: 16
+    connect_timeout: "1s"
+
+    # Optional: address-selection policy. "rr" (default, empty) is atomic
+    # round-robin; "p2c_ewma" picks two random addresses per request and
+    # takes the one with the lower response-latency EWMA. Use p2c_ewma
+    # only when a pool has more than one address; it gains nothing on a
+    # single-address pool and the pool silently falls back to rr there.
+    lb_policy: "p2c_ewma"
+
+    # Optional: passive ejection. When a backend accumulates a streak of
+    # 5xx responses or post-dial IO failures, it's dropped out of
+    # rotation for ejection_duration. Absent block → feature disabled
+    # (zero runtime cost; single-origin bench path is unaffected).
+    outlier_detection:
+      consecutive_5xx: 5
+      consecutive_gateway_errors: 5
+      ejection_duration: "30s"
+      max_ejected_percent: 50
+
+    # Optional: active health probes. tachyon starts one goroutine per
+    # pool and probes every address at the given interval via HTTP HEAD.
+    # Addresses that return 5xx or fail to connect are removed from
+    # rotation until a probe succeeds. Absent block → no goroutine, no
+    # overhead. Addresses start healthy so traffic flows before the
+    # first probe completes.
+    health_check:
+      interval: "10s"
+      path: "/health"
+      timeout: "1s"
+
+    # Optional: retry budgets. When present, tachyon retries GET/HEAD
+    # requests once on gateway error, consuming a token from the bucket.
+    # Tokens replenish at retry_percent of successful requests (e.g. 20%
+    # = 1 token per 5 successes). min_tokens guarantees retries are
+    # possible even after idle periods. Absent block → no retries, no
+    # overhead. Only idempotent methods (GET/HEAD) are retried.
+    retry_budget:
+      retry_percent: 20
+      min_tokens: 3

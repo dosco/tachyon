@@ -1,0 +1,21 @@
+# build output
+tachyon
+origin
+
+# benchmark results (large, machine-specific)
+results/
+
+# pprof profiles
+*.pprof
+*.prof
+cpu.out
+
+# Go test cache
+*.test
+
+# editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+.claude/

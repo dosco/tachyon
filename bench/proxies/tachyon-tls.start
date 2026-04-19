@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Start tachyon with TLS on :8443 (self-signed cert generated at startup)
+# and plaintext on :8080 (for health checks and the warm-up period).
+set -euo pipefail
+cd ~/tachyon
+pkill -f '^./tachyon' 2>/dev/null || true
+sleep 0.3
+WORKERS=$(nproc)
+./tachyon \
+  -config config.yaml \
+  -workers "$WORKERS" \
+  -tls-listen :8443 \
+  > /tmp/tachyon-tls-bench.log 2>&1 &
+# Wait for both ports.
+for _ in $(seq 1 60); do
+  ss -tlnp 2>/dev/null | grep -q ':8443' && exit 0
+  sleep 0.1
+done
+echo "tachyon-tls did not open :8443" >&2; exit 1

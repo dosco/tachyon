@@ -1,0 +1,22 @@
+[package]
+name    = "pingora-bench-proxy"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "pingora-bench-proxy"
+path = "src/main.rs"
+
+[dependencies]
+pingora          = { version = "0.8", features = ["lb"] }
+pingora-core     = { version = "0.8" }
+pingora-proxy    = { version = "0.8" }
+async-trait      = "0.1"
+num_cpus         = "1.16"
+
+[profile.release]
+# Match Cloudflare's published build flags for a fair comparison.
+opt-level = 3
+lto       = "fat"
+codegen-units = 1
+panic     = "abort"

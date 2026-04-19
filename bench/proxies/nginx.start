@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd ~/tachyon
+mkdir -p /tmp/nginx-bench/logs
+sudo nginx -c "$(pwd)/bench/nginx/nginx.conf" -p /tmp/nginx-bench
+for _ in $(seq 1 30); do
+  ss -tlnp 2>/dev/null | grep -q ':8080' && exit 0
+  sleep 0.1
+done
+echo "nginx did not open :8080" >&2; exit 1

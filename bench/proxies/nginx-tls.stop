@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+nginx -c ~/tachyon/bench/nginx/nginx-tls.conf -s quit 2>/dev/null || true

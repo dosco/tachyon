@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+sudo nginx -s stop -p /tmp/nginx-bench 2>/dev/null || sudo pkill -f 'nginx.*nginx-bench' 2>/dev/null || true
