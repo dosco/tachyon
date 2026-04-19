@@ -13,6 +13,15 @@ type Router struct {
 	wildcard *node
 }
 
+// MatchResult is the router's hot-path output. It carries the selected
+// route's stable source-order ID plus the concrete upstream chosen for
+// this request.
+type MatchResult struct {
+	Found    bool
+	RouteID  int
+	Upstream string
+}
+
 // New returns a Router populated from the given rules. Insertion order
 // is irrelevant; longest-prefix-match resolves ambiguity.
 //
@@ -23,13 +32,16 @@ type Router struct {
 // rand + one linear scan over the list.
 func New(rules []Rule) *Router {
 	r := &Router{hosts: map[string]*node{}}
-	for _, rule := range rules {
+	for i, rule := range rules {
+		if rule.RouteID == 0 && i != 0 {
+			rule.RouteID = i
+		}
 		upstream, weighted := ruleTarget(rule)
 		if rule.Host == "*" || rule.Host == "" {
 			if r.wildcard == nil {
 				r.wildcard = &node{}
 			}
-			r.wildcard.insert([]byte(rule.Path), upstream, weighted)
+			r.wildcard.insert([]byte(rule.Path), upstream, weighted, rule.RouteID)
 			continue
 		}
 		n, ok := r.hosts[rule.Host]
@@ -37,7 +49,7 @@ func New(rules []Rule) *Router {
 			n = &node{}
 			r.hosts[rule.Host] = n
 		}
-		n.insert([]byte(rule.Path), upstream, weighted)
+		n.insert([]byte(rule.Path), upstream, weighted, rule.RouteID)
 	}
 	return r
 }
@@ -67,13 +79,12 @@ func ruleTarget(rule Rule) (string, []weightedEntry) {
 	return "", entries
 }
 
-// Match returns an upstream name for (host, path), or "" for no route.
-// For single-upstream rules the return is deterministic; for weighted
-// rules it is a weight-proportional random pick.
+// Match returns the selected route and upstream for (host, path), or a
+// zero-value MatchResult with Found=false for no route.
 //
 // host and path are case-sensitive here; the proxy caller normalises
 // host to lowercase before calling.
-func (r *Router) Match(host string, path []byte) string {
+func (r *Router) Match(host string, path []byte) MatchResult {
 	if n, ok := r.hosts[host]; ok {
 		if term := n.match(path); term != nil {
 			return pick(term)
@@ -84,24 +95,28 @@ func (r *Router) Match(host string, path []byte) string {
 			return pick(term)
 		}
 	}
-	return ""
+	return MatchResult{}
 }
 
-// pick returns the terminal node's upstream. The single-upstream case
-// is an untaken branch — no rand, no allocation. Weighted picks use
-// math/rand/v2's goroutine-safe top-level generator; GOMAXPROCS=1 per
-// worker means lock contention is nil.
-func pick(n *node) string {
+// pick returns the terminal node's concrete match result. The
+// single-upstream case is an untaken branch — no rand, no allocation.
+// Weighted picks use math/rand/v2's goroutine-safe top-level generator;
+// GOMAXPROCS=1 per worker means lock contention is nil.
+func pick(n *node) MatchResult {
 	if len(n.weighted) == 0 {
-		return n.upstream
+		return MatchResult{Found: true, RouteID: n.routeID, Upstream: n.upstream}
 	}
 	total := n.weighted[len(n.weighted)-1].CumWeight
 	r := rand.IntN(total)
 	for _, e := range n.weighted {
 		if r < e.CumWeight {
-			return e.Name
+			return MatchResult{Found: true, RouteID: n.routeID, Upstream: e.Name}
 		}
 	}
 	// Unreachable; the last entry's CumWeight == total > r.
-	return n.weighted[len(n.weighted)-1].Name
+	return MatchResult{
+		Found:    true,
+		RouteID:  n.routeID,
+		Upstream: n.weighted[len(n.weighted)-1].Name,
+	}
 }

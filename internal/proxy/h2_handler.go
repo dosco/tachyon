@@ -18,6 +18,7 @@ import (
 	"tachyon/buf"
 	"tachyon/http1"
 	"tachyon/http2"
+	irt "tachyon/internal/intent/runtime"
 )
 
 // H2Handler adapts H2 requests into H1 upstream forwarding.
@@ -57,9 +58,40 @@ func (h *H2Handler) ServeH2(method, path, authority string, fields []http2.Heade
 		}
 	}
 	rp := h.parent.rp.Load()
-	upName := rp.r.Match(host, []byte(path))
-	if upName == "" {
+	match := rp.r.Match(host, []byte(path))
+	if !match.Found {
 		return w.WriteHeader(404, nil)
+	}
+	upName := match.Upstream
+	routeSet := rp.ip.ByRouteID[match.RouteID]
+	reqView := staticIntentView{
+		method:   method,
+		path:     path,
+		host:     host,
+		clientIP: "",
+		fields:   toHeaderKVs(fields),
+	}
+	reqIntent := irt.ExecuteRequest(routeSet, h.parent.is, reqView, upName)
+	if reqIntent.UpstreamOverride != "" {
+		upName = reqIntent.UpstreamOverride
+	}
+	if reqIntent.HasTerminal {
+		outFields := make([]http2.HeaderField, 0, reqIntent.Terminal.Headers.Len())
+		reqIntent.Terminal.Headers.Each(func(hm irt.HeaderMutation) bool {
+			if hm.Remove || hm.Name == "" {
+				return true
+			}
+			outFields = append(outFields, http2.HeaderField{Name: lowerString([]byte(hm.Name)), Value: hm.Value})
+			return true
+		})
+		if err := w.WriteHeader(reqIntent.Terminal.Status, outFields); err != nil {
+			return err
+		}
+		if reqIntent.Terminal.Body != "" {
+			_, err := io.WriteString(w, reqIntent.Terminal.Body)
+			return err
+		}
+		return nil
 	}
 	pool := rp.p.Get(upName)
 	if pool == nil {
@@ -96,6 +128,9 @@ func (h *H2Handler) ServeH2(method, path, authority string, fields []http2.Heade
 	defer buf.Put(wrSlab)
 	wb := wrSlab.Bytes()[:0]
 
+	if reqIntent.PathOverride != "" {
+		path = reqIntent.PathOverride
+	}
 	wb = http1.AppendRequestLine(wb, []byte(method), []byte(path))
 	hasBody := body != nil
 	for _, f := range fields {
@@ -106,6 +141,10 @@ func (h *H2Handler) ServeH2(method, path, authority string, fields []http2.Heade
 		}
 		if isHopByHop(name) || http1.EqualFold(name, http1.HdrHost) ||
 			http1.EqualFold(name, http1.HdrExpect) {
+			continue
+		}
+		if intentHeaderRemoved(reqIntent.HeaderMutations, name) ||
+			intentHeaderOverridden(reqIntent.HeaderMutations, name) {
 			continue
 		}
 		// When we reframe the body as HTTP/1.1 chunked below, we must
@@ -123,6 +162,13 @@ func (h *H2Handler) ServeH2(method, path, authority string, fields []http2.Heade
 		wb = http1.AppendHeader(wb, name, []byte(f.Value))
 	}
 	wb = http1.AppendHeader(wb, http1.HdrHost, []byte(uc.Addr))
+	reqIntent.HeaderMutations.Each(func(hm irt.HeaderMutation) bool {
+		if hm.Remove || hm.Name == "" {
+			return true
+		}
+		wb = http1.AppendHeader(wb, []byte(hm.Name), []byte(hm.Value))
+		return true
+	})
 	// Phase 2.D: H2 DATA frames are framed by the H2 layer itself, so
 	// by the time we get a body io.Reader here, length is unknown to
 	// the H1 upstream. Inject Transfer-Encoding: chunked and reframe
@@ -222,11 +268,15 @@ func (h *H2Handler) ServeH2(method, path, authority string, fields []http2.Heade
 	rdSlab.MarkWritten(hdrN + len(respBody))
 
 	// Build the H2 header fields from the H1 response.
-	outFields := make([]http2.HeaderField, 0, resp.NumHeaders)
+	respIntent := irt.ExecuteResponse(routeSet, func(name string) string {
+		return string(resp.Lookup([]byte(name)))
+	})
+	outFields := make([]http2.HeaderField, 0, resp.NumHeaders+respIntent.HeaderMutations.Len())
 	src := resp.Src()
 	for i := 0; i < resp.NumHeaders; i++ {
 		name := resp.Headers[i].Name.Bytes(src)
-		if isHopByHop(name) {
+		if isHopByHop(name) || intentHeaderRemoved(respIntent.HeaderMutations, name) ||
+			intentHeaderOverridden(respIntent.HeaderMutations, name) {
 			continue
 		}
 		outFields = append(outFields, http2.HeaderField{
@@ -234,6 +284,13 @@ func (h *H2Handler) ServeH2(method, path, authority string, fields []http2.Heade
 			Value: string(resp.Headers[i].Value.Bytes(src)),
 		})
 	}
+	respIntent.HeaderMutations.Each(func(hm irt.HeaderMutation) bool {
+		if hm.Remove || hm.Name == "" {
+			return true
+		}
+		outFields = append(outFields, http2.HeaderField{Name: lowerString([]byte(hm.Name)), Value: hm.Value})
+		return true
+	})
 	if err := w.WriteHeader(int(resp.Status), outFields); err != nil {
 		return err
 	}
@@ -313,4 +370,12 @@ func lowerString(b []byte) string {
 		buf[i] = c
 	}
 	return string(buf)
+}
+
+func toHeaderKVs(fields []http2.HeaderField) []headerKV {
+	out := make([]headerKV, 0, len(fields))
+	for _, f := range fields {
+		out = append(out, headerKV{name: f.Name, value: f.Value})
+	}
+	return out
 }

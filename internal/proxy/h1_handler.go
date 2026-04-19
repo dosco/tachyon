@@ -10,7 +10,9 @@ import (
 
 	"tachyon/buf"
 	"tachyon/http1"
+	irt "tachyon/internal/intent/runtime"
 	"tachyon/internal/router"
+	"tachyon/internal/traffic"
 	"tachyon/internal/upstream"
 	"tachyon/metrics"
 )
@@ -24,6 +26,7 @@ import (
 // on the order of once per operator action.
 type Handler struct {
 	rp atomic.Pointer[routerPools]
+	is *irt.State
 
 	// strictDeadlines, when true, re-arms read/write deadlines on every
 	// request (both client and upstream) instead of the amortized
@@ -43,14 +46,15 @@ type Handler struct {
 // reload installs a consistent pair: the new Router always references
 // upstreams present in the new Pools.
 type routerPools struct {
-	r *router.Router
-	p *upstream.Pools
+	r  *router.Router
+	p  *upstream.Pools
+	ip irt.RoutePrograms
 }
 
 // NewHandler builds a Handler with an initial router + pool set.
-func NewHandler(r *router.Router, p *upstream.Pools) *Handler {
-	h := &Handler{}
-	h.rp.Store(&routerPools{r: r, p: p})
+func NewHandler(r *router.Router, p *upstream.Pools, ip irt.RoutePrograms) *Handler {
+	h := &Handler{is: irt.NewState()}
+	h.rp.Store(&routerPools{r: r, p: p, ip: ip})
 	return h
 }
 
@@ -70,15 +74,16 @@ func (h *Handler) SetAccessLog(log *slog.Logger) {
 // Store atomically replaces the router + pool set. Called by SIGHUP reload.
 // Callers are expected to close the previous pool set's idle conns after
 // installing the new one.
-func (h *Handler) Store(r *router.Router, p *upstream.Pools) {
-	h.rp.Store(&routerPools{r: r, p: p})
+func (h *Handler) Store(r *router.Router, p *upstream.Pools, ip irt.RoutePrograms) {
+	h.rp.Store(&routerPools{r: r, p: p, ip: ip})
 }
 
 // Router returns the current router. Cheap atomic load.
 func (h *Handler) Router() *router.Router { return h.rp.Load().r }
 
 // Pools returns the current pool set. Cheap atomic load.
-func (h *Handler) Pools() *upstream.Pools { return h.rp.Load().p }
+func (h *Handler) Pools() *upstream.Pools     { return h.rp.Load().p }
+func (h *Handler) Intents() irt.RoutePrograms { return h.rp.Load().ip }
 
 // ServeConn runs the per-client loop: parse request, route, forward,
 // stream response, loop on keep-alive. Returns when the client closes or
@@ -204,9 +209,30 @@ func (h *Handler) ServeConn(c net.Conn) {
 		// request without racing in-flight work.
 		rp := h.rp.Load()
 		host := string(req.Lookup(http1.HdrHost))
-		upName := rp.r.Match(host, req.PathBytes())
-		if upName == "" {
+		match := rp.r.Match(host, req.PathBytes())
+		if !match.Found {
+			recordTraffic(&req, host, clientAddr, 0, 404, irt.Trace{RouteID: -1})
 			sendStatus(c, 404)
+			if req.Close {
+				return
+			}
+			continue
+		}
+		upName := match.Upstream
+		routeSet := rp.ip.ByRouteID[match.RouteID]
+		reqView := h1IntentView{req: &req, host: host, path: string(req.PathBytes()), clientIP: clientAddr}
+		var reqIntent irt.RequestResult
+		if traffic.Enabled() {
+			reqIntent = irt.ExecuteRequestTraced(routeSet, h.is, reqView, upName)
+		} else {
+			reqIntent = irt.ExecuteRequest(routeSet, h.is, reqView, upName)
+		}
+		if reqIntent.UpstreamOverride != "" {
+			upName = reqIntent.UpstreamOverride
+		}
+		if reqIntent.HasTerminal {
+			recordTraffic(&req, host, clientAddr, match.RouteID, reqIntent.Terminal.Status, reqIntent.Trace)
+			sendTerminal(c, reqIntent.Terminal)
 			if req.Close {
 				return
 			}
@@ -214,6 +240,7 @@ func (h *Handler) ServeConn(c net.Conn) {
 		}
 		pool := rp.p.Get(upName)
 		if pool == nil {
+			recordTraffic(&req, host, clientAddr, match.RouteID, 502, reqIntent.Trace)
 			sendStatus(c, 502)
 			if req.Close {
 				return
@@ -246,7 +273,7 @@ func (h *Handler) ServeConn(c net.Conn) {
 		// but keep the client conn open for the next request unless the
 		// client asked for Connection: close.
 		fwdStart := time.Now()
-		fwdErr := forward(c, clientTCP, stickyUC, &req, &resp, bodyHead, wr, rs, clientAddr, h.strictDeadlines)
+		fwdErr := forward(c, clientTCP, stickyUC, &req, &resp, bodyHead, wr, rs, clientAddr, h.strictDeadlines, reqIntent, routeSet)
 		if fwdErr != nil {
 			// A malformed chunked body is a client-framing error; we
 			// may have already written a partial body to upstream so
@@ -279,7 +306,7 @@ func (h *Handler) ServeConn(c net.Conn) {
 			if !malformed && pool.AllowRetry() && isIdempotent(req.MethodBytes()) {
 				if retryUC, rerr := pool.Acquire(); rerr == nil {
 					fwdStart = time.Now()
-					retryErr := forward(c, clientTCP, retryUC, &req, &resp, bodyHead, wr, rs, clientAddr, h.strictDeadlines)
+					retryErr := forward(c, clientTCP, retryUC, &req, &resp, bodyHead, wr, rs, clientAddr, h.strictDeadlines, reqIntent, routeSet)
 					if retryErr == nil {
 						// Retry succeeded: account for the response and
 						// let the normal post-forward path run.
@@ -305,6 +332,7 @@ func (h *Handler) ServeConn(c net.Conn) {
 			}
 
 			sendStatus(c, status)
+			recordTraffic(&req, host, clientAddr, match.RouteID, status, reqIntent.Trace)
 			if malformed || req.Close {
 				return
 			}
@@ -330,6 +358,7 @@ func (h *Handler) ServeConn(c net.Conn) {
 				"peer", clientAddr,
 			)
 		}
+		recordTraffic(&req, host, clientAddr, match.RouteID, int(resp.Status), reqIntent.Trace)
 
 		// If the response said the upstream is closing, drop the sticky
 		// conn so we dial fresh next time. Also honour Connection: close
@@ -450,13 +479,19 @@ func forward(
 	wrSlab, rsSlab *buf.Slab,
 	clientAddr string,
 	strictDeadlines bool,
+	reqIntent irt.RequestResult,
+	routeSet irt.RoutePolicySet,
 ) error {
 	// --- Build upstream request ------------------------------------------
 
 	wrBuf := wrSlab.Bytes()
 	rsBuf := rsSlab.Bytes()
 	w := wrBuf[:0]
-	w = http1.AppendRequestLine(w, req.MethodBytes(), req.PathBytes())
+	path := req.PathBytes()
+	if reqIntent.PathOverride != "" {
+		path = []byte(reqIntent.PathOverride)
+	}
+	w = http1.AppendRequestLine(w, req.MethodBytes(), path)
 
 	// Append headers, skipping hop-by-hop and Host (we rewrite Host below).
 	// Also skip Expect — we answered 100-continue locally; forwarding
@@ -466,7 +501,9 @@ func forward(
 		name := req.Headers[i].Name.Bytes(src)
 		if isHopByHop(name) || http1.EqualFold(name, http1.HdrHost) ||
 			http1.EqualFold(name, http1.HdrXForwardedFor) ||
-			http1.EqualFold(name, http1.HdrExpect) {
+			http1.EqualFold(name, http1.HdrExpect) ||
+			intentHeaderRemoved(reqIntent.HeaderMutations, name) ||
+			intentHeaderOverridden(reqIntent.HeaderMutations, name) {
 			continue
 		}
 		w = http1.AppendHeader(w, name, req.Headers[i].Value.Bytes(src))
@@ -497,6 +534,13 @@ func forward(
 			w = http1.AppendHeader(w, http1.HdrXForwardedFor, []byte(clientAddr))
 		}
 	}
+	reqIntent.HeaderMutations.Each(func(hm irt.HeaderMutation) bool {
+		if hm.Remove || hm.Name == "" {
+			return true
+		}
+		w = http1.AppendHeader(w, []byte(hm.Name), []byte(hm.Value))
+		return true
+	})
 	w = http1.AppendEndOfHeaders(w)
 
 	// Pack bodyHead after the headers if it fits. One writev beats two
@@ -570,16 +614,27 @@ func forward(
 	// High-water mark in rsSlab = header bytes + body-piggyback.
 	rsSlab.MarkWritten(n + len(respBody))
 
+	respIntent := irt.ExecuteResponse(routeSet, func(name string) string {
+		return string(resp.Lookup([]byte(name)))
+	})
 	w = wrBuf[:0]
 	w = http1.AppendStatus(w, int(resp.Status))
 	for i := 0; i < resp.NumHeaders; i++ {
 		src := resp.Src()
 		name := resp.Headers[i].Name.Bytes(src)
-		if isHopByHop(name) {
+		if isHopByHop(name) || intentHeaderRemoved(respIntent.HeaderMutations, name) ||
+			intentHeaderOverridden(respIntent.HeaderMutations, name) {
 			continue
 		}
 		w = http1.AppendHeader(w, name, resp.Headers[i].Value.Bytes(src))
 	}
+	respIntent.HeaderMutations.Each(func(hm irt.HeaderMutation) bool {
+		if hm.Remove || hm.Name == "" {
+			return true
+		}
+		w = http1.AppendHeader(w, []byte(hm.Name), []byte(hm.Value))
+		return true
+	})
 	w = http1.AppendEndOfHeaders(w)
 
 	// Pack respBody after headers if it fits. Most 1 KiB responses land
@@ -665,9 +720,9 @@ func spliceAll(dst io.Writer, srcTCP *net.TCPConn, srcFallback io.Reader) error 
 //     never lapses on a cooperative peer. Plan acceptance #3
 //     (keep-alive survives past 2 minutes) passes.
 const (
-	DeadlineWindow   = 2 * time.Minute
-	DeadlineRefresh  = 30 * time.Second
-	DeadlineMaxUses  = 64
+	DeadlineWindow  = 2 * time.Minute
+	DeadlineRefresh = 30 * time.Second
+	DeadlineMaxUses = 64
 )
 
 // maybeBumpUpstreamDeadline re-arms the upstream conn's read+write

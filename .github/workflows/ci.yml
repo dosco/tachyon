@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+      - name: Integration tests
+        run: go test -tags integration ./e2e/
+
+  generation-drift:
+    name: Generation drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install tachyon
+        run: go install ./cmd/tachyon
+
+      - name: Regenerate intent package
+        run: tachyon intent verify intent/*.intent
+
+      - name: Check for drift
+        run: |
+          if ! git diff --exit-code internal/intent/generated/current/; then
+            echo "::error::Generated intent package is out of sync. Run 'tachyon intent build intent/*.intent' and commit the result."
+            exit 1
+          fi
+
+  fuzz-smoke:
+    name: Fuzz smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Fuzz parser (30s)
+        run: go test ./internal/intent/ -fuzz=FuzzParseIntent -fuzztime=30s
+
+      - name: Fuzz bundle builder (30s)
+        run: go test ./internal/intent/ -fuzz=FuzzBuildBundle -fuzztime=30s
+
+      - name: Fuzz match expression parser (30s)
+        run: go test ./internal/intent/ -fuzz=FuzzMatchExpr -fuzztime=30s
+
+  bench:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run generated benchmarks
+        run: |
+          go test ./internal/intent/generated/current/ \
+            -run='^$' \
+            -bench=. \
+            -benchmem \
+            -count=3 \
+            | tee bench-current.txt
+
+      - name: Assert no alloc regressions on hot paths
+        run: |
+          go run ./cmd/tachyon/... intent bench intent/*.intent 2>/dev/null || true
+          python3 - <<'EOF'
+          import re, sys
+
+          bench_txt = open("bench-current.txt").read()
+          failures = []
+
+          # BenchmarkNoMatch and BenchmarkRequestHotPath must be 0 allocs/op
+          zero_alloc = ["BenchmarkNoMatch", "BenchmarkRequestHotPath", "BenchmarkResponseHeaders"]
+          for name in zero_alloc:
+              pattern = rf"{re.escape(name)}-\d+\s+\d+\s+[\d.]+\s+ns/op\s+\d+ B/op\s+(\d+) allocs/op"
+              matches = re.findall(pattern, bench_txt)
+              for allocs in matches:
+                  if int(allocs) > 0:
+                      failures.append(f"{name}: got {allocs} allocs/op, want 0")
+
+          if failures:
+              for f in failures:
+                  print(f"FAIL: {f}")
+              sys.exit(1)
+          else:
+              print("All hot-path allocation checks passed")
+          EOF
+
+      - name: Upload bench results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results
+          path: bench-current.txt
+
+  linux-build:
+    name: Linux cross-compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build for linux/amd64 (includes io_uring paths)
+        run: GOOS=linux GOARCH=amd64 go build ./...

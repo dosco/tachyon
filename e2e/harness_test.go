@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"tachyon/internal/proxy"
+	irt "tachyon/internal/intent/runtime"
 	"tachyon/internal/router"
 	trt "tachyon/internal/runtime"
 	"tachyon/internal/upstream"
@@ -57,7 +58,7 @@ func startProxy(t *testing.T, originAddr string) *testProxy {
 		"default": {Addrs: []string{originAddr}, IdlePerHost: 8, ConnectTimeout: time.Second},
 	}
 	r := router.New([]router.Rule{{Host: "*", Path: "/", Upstream: "default"}})
-	h := proxy.NewHandler(r, upstream.NewPools(defs))
+	h := proxy.NewHandler(r, upstream.NewPools(defs), irt.EmptyRoutePrograms())
 
 	w := &trt.Worker{
 		Listener: ln,
@@ -112,7 +113,7 @@ func (tp *testProxy) Reload(newOrigin string) {
 	}
 	r := router.New([]router.Rule{{Host: "*", Path: "/", Upstream: "default"}})
 	oldPools := tp.handler.Pools()
-	tp.handler.Store(r, upstream.NewPools(defs))
+	tp.handler.Store(r, upstream.NewPools(defs), irt.EmptyRoutePrograms())
 	oldPools.CloseAll()
 }
 

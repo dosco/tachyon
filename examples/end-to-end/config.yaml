@@ -1,0 +1,13 @@
+listen: "127.0.0.1:18080"
+
+upstreams:
+  example_origin:
+    addrs: ["127.0.0.1:19090"]
+
+routes:
+  - host: "example.local"
+    path: "/"
+    upstream: "example_origin"
+    intents:
+      - example_block_admin_debug
+      - example_proxy_headers

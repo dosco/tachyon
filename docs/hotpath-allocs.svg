@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 250" width="920" height="250"
+     font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
+  <rect width="920" height="250" fill="#ffffff" rx="10"/>
+
+  <text x="30" y="32" font-size="14" fill="#212529" font-weight="700" letter-spacing="0.2">
+    Hot-path allocations  ·  per request, no-match case
+  </text>
+  <text x="30" y="50" font-size="10.5" fill="#868e96">
+    heap allocations the garbage collector has to clean up on every request
+  </text>
+
+  <!-- Scale 0–50 allocs over x=190..x=840 (650 px; 13 px per alloc) -->
+  <line x1="190" y1="75" x2="190" y2="205" stroke="#dee2e6" stroke-width="1"/>
+  <line x1="320" y1="75" x2="320" y2="205" stroke="#f1f3f5" stroke-width="1"/>
+  <line x1="450" y1="75" x2="450" y2="205" stroke="#f1f3f5" stroke-width="1"/>
+  <line x1="580" y1="75" x2="580" y2="205" stroke="#f1f3f5" stroke-width="1"/>
+  <line x1="710" y1="75" x2="710" y2="205" stroke="#f1f3f5" stroke-width="1"/>
+  <line x1="840" y1="75" x2="840" y2="205" stroke="#dee2e6" stroke-width="1"/>
+
+  <text x="320" y="222" text-anchor="middle" font-size="9.5" fill="#adb5bd">10</text>
+  <text x="450" y="222" text-anchor="middle" font-size="9.5" fill="#adb5bd">20</text>
+  <text x="580" y="222" text-anchor="middle" font-size="9.5" fill="#adb5bd">30</text>
+  <text x="710" y="222" text-anchor="middle" font-size="9.5" fill="#adb5bd">40</text>
+  <text x="840" y="222" text-anchor="middle" font-size="9.5" fill="#adb5bd">50</text>
+
+  <!-- Typical Go HTTP server: ~40 allocs -->
+  <text x="180" y="98" text-anchor="end" font-size="11" fill="#495057" font-weight="500">typical Go HTTP</text>
+  <rect x="190" y="84" width="520" height="22" rx="3" fill="#ced4da"/>
+  <text x="718" y="100" font-size="11" fill="#495057">~40 allocs</text>
+
+  <!-- net/http stdlib: ~20 allocs -->
+  <text x="180" y="138" text-anchor="end" font-size="11" fill="#495057" font-weight="500">net/http baseline</text>
+  <rect x="190" y="124" width="260" height="22" rx="3" fill="#ced4da"/>
+  <text x="458" y="140" font-size="11" fill="#495057">~20 allocs</text>
+
+  <!-- tachyon: 0 allocs / 117 ns -->
+  <text x="180" y="182" text-anchor="end" font-size="12" fill="#e67700" font-weight="700">tachyon</text>
+  <!-- Draw a bold highlighted "0" marker at x=190 -->
+  <circle cx="190" cy="173" r="10" fill="#fff9db" stroke="#fcc419" stroke-width="2"/>
+  <text x="190" y="177" text-anchor="middle" font-size="11" fill="#e67700" font-weight="700">0</text>
+
+  <!-- Callout bubble -->
+  <rect x="210" y="160" width="218" height="28" rx="14" fill="#fff9db" stroke="#fcc419" stroke-width="1.5"/>
+  <text x="319" y="178" text-anchor="middle" font-size="12" fill="#e67700" font-weight="700">
+    0 allocs  ·  117 ns  ·  no GC pressure
+  </text>
+
+  <text x="440" y="179" font-size="10" fill="#868e96">
+    measured by BenchmarkNoMatch in internal/intent
+  </text>
+</svg>

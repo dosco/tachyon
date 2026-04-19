@@ -1,0 +1,93 @@
+intent_version "0.1"
+
+# Delegate auth for all /secure/* paths to an external service.
+# Requires a Class C runtime (stdlib worker); not compatible with uring path.
+policy external_auth {
+  priority 300
+  match req.path.has_prefix("/secure/")
+
+  request {
+    auth_external("https://authz.internal/check", 401)
+  }
+}
+
+# Deny all /admin/* paths unless the role cookie is set to "admin".
+# Class A — zero allocations on the happy path.
+policy admin_cookie_gate {
+  priority 250
+  match req.path.has_prefix("/admin/") && req.cookie("role") == "admin"
+
+  request {
+    set_header("x-role", "admin")
+  }
+
+  case admin_passes {
+    request.path "/admin/dashboard"
+    request.cookie "role", "admin"
+    expect.request_header "x-role", "admin"
+  }
+
+  budget {
+    request.allocs <= 1
+  }
+}
+
+# Hard block on /admin/* for everyone who did NOT match admin_cookie_gate
+# (lower priority fires after the gate above fails to match).
+policy admin_deny_rest {
+  priority 240
+  match req.path.has_prefix("/admin/")
+
+  request {
+    deny(403)
+  }
+
+  case unauthenticated_blocked {
+    request.path "/admin/settings"
+    expect.status 403
+  }
+
+  budget {
+    request.allocs <= 3
+  }
+}
+
+# Block a specific IP from reaching any endpoint.
+policy ip_blocklist {
+  priority 500
+  match req.ip == "1.2.3.4"
+
+  request {
+    deny(403)
+  }
+
+  case blocked_ip {
+    request.client_ip "1.2.3.4"
+    request.path "/"
+    expect.status 403
+  }
+
+  budget {
+    request.allocs <= 3
+  }
+}
+
+# Return a legal hold response for specific path prefixes.
+policy legal_block {
+  priority 450
+  match req.path.has_prefix("/content/restricted/")
+
+  request {
+    respond(451, "unavailable for legal reasons")
+  }
+
+  case restricted_path {
+    request.path "/content/restricted/doc123"
+    expect.status 451
+    expect.body "unavailable for legal reasons"
+  }
+
+  budget {
+    request.allocs <= 3
+  }
+}

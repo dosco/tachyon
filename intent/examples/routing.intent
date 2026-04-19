@@ -1,0 +1,86 @@
+intent_version "0.1"
+
+# Route /v2/* paths to the v2 upstream pool, stripping the version prefix.
+policy route_v2 {
+  priority 200
+  match req.path.has_prefix("/v2/")
+
+  request {
+    strip_prefix("/v2")
+    route_to("pool-v2")
+  }
+
+  case v2_route_and_strip {
+    request.path "/v2/users/123"
+    expect.upstream "pool-v2"
+    expect.path "/users/123"
+  }
+}
+
+# Canary: send 5% of API traffic to the experimental pool.
+policy canary_experimental {
+  priority 90
+  match req.path.has_prefix("/api/")
+
+  request {
+    canary(5, "pool-experimental")
+  }
+}
+
+# Permanent redirect from old path prefix to new one.
+policy redirect_legacy {
+  priority 350
+  match req.path.has_prefix("/legacy/")
+
+  request {
+    redirect(301, "https://api.example.com/v2/")
+  }
+
+  case legacy_redirected {
+    request.path "/legacy/endpoint"
+    expect.status 301
+  }
+
+  budget {
+    request.allocs <= 3
+  }
+}
+
+# Respond to healthcheck probes directly without touching upstream.
+policy healthcheck {
+  priority 999
+  match req.path == "/healthz"
+
+  request {
+    respond(200, "ok")
+  }
+
+  case healthz {
+    request.method "GET"
+    request.path "/healthz"
+    expect.status 200
+    expect.body "ok"
+  }
+
+  budget {
+    request.allocs <= 3
+  }
+}
+
+# Add version prefix for all JSON API calls from mobile clients.
+policy mobile_api_prefix {
+  priority 120
+  match req.path.has_suffix(".json") && req.header("x-client") == "mobile"
+
+  request {
+    add_prefix("/mobile")
+    set_header("x-mobile-client", "1")
+  }
+
+  case mobile_json_prefixed {
+    request.path "/data/feed.json"
+    request.header "x-client", "mobile"
+    expect.path "/mobile/data/feed.json"
+    expect.request_header "x-mobile-client", "1"
+  }
+}

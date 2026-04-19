@@ -4,6 +4,7 @@ origin
 
 # benchmark results (large, machine-specific)
 results/
+.tachyon/
 
 # pprof profiles
 *.pprof

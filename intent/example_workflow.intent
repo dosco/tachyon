@@ -1,0 +1,48 @@
+intent_version "0.1"
+
+policy example_proxy_headers {
+  priority 100
+  match req.host == "example.local"
+
+  request {
+    set_header("x-example-proxy", "tachyon")
+  }
+
+  response {
+    set_header("x-example-served-by", "tachyon")
+  }
+
+  case forwards_with_headers {
+    request.method "GET"
+    request.host "example.local"
+    request.path "/hello"
+    expect.request_header "x-example-proxy", "tachyon"
+    expect.response_header "x-example-served-by", "tachyon"
+  }
+
+  budget {
+    request.allocs <= 1
+    response.allocs <= 0
+  }
+}
+
+policy example_block_admin_debug {
+  priority 200
+  match req.host == "example.local" && req.path.has_prefix("/admin") && req.query("debug") == "1"
+
+  request {
+    deny(403)
+  }
+
+  case blocks_debug_admin {
+    request.method "GET"
+    request.host "example.local"
+    request.path "/admin"
+    request.query "debug", "1"
+    expect.status 403
+  }
+
+  budget {
+    request.allocs <= 3
+  }
+}

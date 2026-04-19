@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"tachyon/http1"
+	irt "tachyon/internal/intent/runtime"
 	"tachyon/internal/router"
 	"tachyon/iouring"
 	"tachyon/iouring/buffers"
@@ -34,9 +35,11 @@ type UpstreamDef struct {
 
 // Server is the event loop. One per worker process.
 type Server struct {
-	Router    *router.Router
-	Upstreams []UpstreamDef
-	Log       *slog.Logger
+	Router      *router.Router
+	Intents     irt.RoutePrograms
+	IntentState *irt.State
+	Upstreams   []UpstreamDef
+	Log         *slog.Logger
 
 	// Tunables.
 	RingEntries uint32 // default 4096
@@ -149,6 +152,7 @@ func (s *Server) Serve(addr string) error {
 	for i := range s.conns {
 		s.conns[i].state = stFree
 		s.conns[i].upFD = -1
+		s.conns[i].routeID = -1
 		s.conns[i].pipeRd = -1
 		s.conns[i].pipeWr = -1
 	}
@@ -246,6 +250,8 @@ func (s *Server) onAccept(c *iouring.CQE) {
 	}
 	co := &s.conns[slot]
 	co.clientFD = int32(fd)
+	co.clientIP = peerIP(fd)
+	co.routeID = -1
 	co.state = stReadingRequest
 	s.armRecvClient(slot)
 }
@@ -302,6 +308,8 @@ func (s *Server) freeSlot(slot uint32) {
 	}
 	co.idleTicks = 0
 	co.spliceRemaining = 0
+	co.routeID = -1
+	co.clientIP = ""
 	co.rdBuf = nil
 	co.upRdBuf = nil
 	co.wrBuf = nil
@@ -626,16 +634,28 @@ func (s *Server) onRecvUp(c *iouring.CQE, slot, seq uint32) {
 			return
 		}
 		// Build response headers into cliWrBuf.
+		routeSet := s.Intents.ByRouteID[co.routeID]
+		respIntent := irt.ExecuteResponse(routeSet, func(name string) string {
+			return string(co.resp.Lookup([]byte(name)))
+		})
 		w := co.cliWrBuf[:0]
 		w = http1.AppendStatus(w, int(co.resp.Status))
 		src := co.resp.Src()
 		for i := 0; i < co.resp.NumHeaders; i++ {
 			name := co.resp.Headers[i].Name.Bytes(src)
-			if isHopByHop(name) {
+			if isHopByHop(name) || intentHeaderRemoved(respIntent.HeaderMutations, name) ||
+				intentHeaderOverridden(respIntent.HeaderMutations, name) {
 				continue
 			}
 			w = http1.AppendHeader(w, name, co.resp.Headers[i].Value.Bytes(src))
 		}
+		respIntent.HeaderMutations.Each(func(hm irt.HeaderMutation) bool {
+			if hm.Remove || hm.Name == "" {
+				return true
+			}
+			w = http1.AppendHeader(w, []byte(hm.Name), []byte(hm.Value))
+			return true
+		})
 		w = http1.AppendEndOfHeaders(w)
 		// Any body bytes that arrived with the headers.
 		bodyHead := co.upRdBuf[n:co.upRdFilled]
@@ -780,11 +800,28 @@ func (s *Server) tryParseBuffered(slot uint32) {
 func (s *Server) routeAndForward(slot uint32) {
 	co := &s.conns[slot]
 	host := string(co.req.Lookup(http1.HdrHost))
-	upName := s.Router.Match(host, co.req.PathBytes())
-	if upName == "" {
+	match := s.Router.Match(host, co.req.PathBytes())
+	if !match.Found {
 		s.sendStatus(slot, 404)
 		return
 	}
+	routeSet := s.Intents.ByRouteID[match.RouteID]
+	reqView := intentRequestView{
+		req:      &co.req,
+		host:     host,
+		path:     string(co.req.PathBytes()),
+		clientIP: co.clientIP,
+	}
+	reqIntent := irt.ExecuteRequest(routeSet, s.IntentState, reqView, match.Upstream)
+	if reqIntent.HasTerminal {
+		s.sendTerminal(slot, reqIntent.Terminal, co.req.Close)
+		return
+	}
+	upName := match.Upstream
+	if reqIntent.UpstreamOverride != "" {
+		upName = reqIntent.UpstreamOverride
+	}
+	co.routeID = match.RouteID
 	pool := s.pools[upName]
 	if pool == nil {
 		s.sendStatus(slot, 502)
@@ -811,18 +848,31 @@ func (s *Server) routeAndForward(slot uint32) {
 	co.poolName = upName
 
 	w := co.wrBuf[:0]
-	w = http1.AppendRequestLine(w, co.req.MethodBytes(), co.req.PathBytes())
+	path := co.req.PathBytes()
+	if reqIntent.PathOverride != "" {
+		path = []byte(reqIntent.PathOverride)
+	}
+	w = http1.AppendRequestLine(w, co.req.MethodBytes(), path)
 	src := co.req.Src()
 	for i := 0; i < co.req.NumHeaders; i++ {
 		name := co.req.Headers[i].Name.Bytes(src)
 		if isHopByHop(name) || http1.EqualFold(name, http1.HdrHost) ||
 			http1.EqualFold(name, http1.HdrXForwardedFor) ||
-			http1.EqualFold(name, http1.HdrExpect) {
+			http1.EqualFold(name, http1.HdrExpect) ||
+			intentHeaderRemoved(reqIntent.HeaderMutations, name) ||
+			intentHeaderOverridden(reqIntent.HeaderMutations, name) {
 			continue
 		}
 		w = http1.AppendHeader(w, name, co.req.Headers[i].Value.Bytes(src))
 	}
 	w = http1.AppendHeader(w, http1.HdrHost, []byte(pool.addr))
+	reqIntent.HeaderMutations.Each(func(hm irt.HeaderMutation) bool {
+		if hm.Remove || hm.Name == "" {
+			return true
+		}
+		w = http1.AppendHeader(w, []byte(hm.Name), []byte(hm.Value))
+		return true
+	})
 	w = http1.AppendEndOfHeaders(w)
 
 	// Phase 1.F body forwarding. The H1 recv above read the header
@@ -989,6 +1039,33 @@ func (s *Server) sendStatus(slot uint32, code int) {
 	co.cliWrLen = len(w)
 	co.cliWrSent = 0
 	co.closeAfter = true
+	co.respBodyRemaining = 0
+	co.respBodyChunked = false
+	co.respBodyUntilEOF = false
+	co.state = stSendingClientResponse
+	s.armSendClient(slot)
+}
+
+func (s *Server) sendTerminal(slot uint32, tr irt.TerminalResponse, closeAfter bool) {
+	co := &s.conns[slot]
+	w := co.cliWrBuf[:0]
+	w = http1.AppendStatus(w, tr.Status)
+	tr.Headers.Each(func(hm irt.HeaderMutation) bool {
+		if hm.Remove || hm.Name == "" {
+			return true
+		}
+		w = http1.AppendHeader(w, []byte(hm.Name), []byte(hm.Value))
+		return true
+	})
+	w = http1.AppendContentLength(w, int64(len(tr.Body)))
+	w = http1.AppendEndOfHeaders(w)
+	if tr.Body != "" {
+		w = append(w, tr.Body...)
+	}
+	co.cliWrBuf = append(co.cliWrBuf[:0], w...)
+	co.cliWrLen = len(w)
+	co.cliWrSent = 0
+	co.closeAfter = closeAfter
 	co.respBodyRemaining = 0
 	co.respBodyChunked = false
 	co.respBodyUntilEOF = false

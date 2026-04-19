@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 260" width="920" height="260"
+     font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
+  <rect width="920" height="260" fill="#ffffff" rx="10"/>
+
+  <text x="30" y="34" font-size="14" fill="#212529" font-weight="700" letter-spacing="0.2">
+    Throughput  ·  plaintext GET, 512 conns, burst
+  </text>
+  <text x="30" y="52" font-size="10.5" fill="#868e96">
+    requests per second  ·  16-core GCE machine  ·  higher is better
+  </text>
+
+  <!-- Scale: 170,000 rps → 700 px at x=150 -->
+  <!-- Gridlines -->
+  <line x1="150" y1="80" x2="150" y2="230" stroke="#dee2e6" stroke-width="1"/>
+  <line x1="315" y1="80" x2="315" y2="230" stroke="#f1f3f5" stroke-width="1"/>
+  <line x1="480" y1="80" x2="480" y2="230" stroke="#f1f3f5" stroke-width="1"/>
+  <line x1="645" y1="80" x2="645" y2="230" stroke="#f1f3f5" stroke-width="1"/>
+  <line x1="810" y1="80" x2="810" y2="230" stroke="#f1f3f5" stroke-width="1"/>
+
+  <text x="315" y="247" text-anchor="middle" font-size="9.5" fill="#adb5bd">40k</text>
+  <text x="480" y="247" text-anchor="middle" font-size="9.5" fill="#adb5bd">80k</text>
+  <text x="645" y="247" text-anchor="middle" font-size="9.5" fill="#adb5bd">120k</text>
+  <text x="810" y="247" text-anchor="middle" font-size="9.5" fill="#adb5bd">160k</text>
+
+  <!-- nginx bar: 138,672 / 170,000 * 660 = 538 px -->
+  <text x="140" y="102" text-anchor="end" font-size="12" fill="#495057" font-weight="500">nginx</text>
+  <rect x="150" y="88" width="571" height="22" rx="3" fill="#ced4da"/>
+  <text x="730" y="104" font-size="11" fill="#495057">138,672 rps</text>
+
+  <!-- Pingora bar: 139,772 -->
+  <text x="140" y="142" text-anchor="end" font-size="12" fill="#495057" font-weight="500">Pingora</text>
+  <rect x="150" y="128" width="576" height="22" rx="3" fill="#ced4da"/>
+  <text x="735" y="144" font-size="11" fill="#495057">139,772 rps</text>
+  <text x="140" y="156" text-anchor="end" font-size="9" fill="#adb5bd">Rust</text>
+
+  <!-- tachyon bar: 160,728 -->
+  <text x="140" y="196" text-anchor="end" font-size="12" fill="#5f3dc4" font-weight="700">tachyon</text>
+  <rect x="150" y="182" width="662" height="26" rx="3" fill="#9775fa"/>
+  <text x="822" y="200" font-size="12" fill="#5f3dc4" font-weight="700">160,728 rps</text>
+  <text x="140" y="210" text-anchor="end" font-size="9" fill="#7950f2">Go</text>
+
+  <!-- Delta badge -->
+  <rect x="660" y="214" width="58" height="20" rx="10" fill="#fff9db" stroke="#fcc419" stroke-width="1.2"/>
+  <text x="689" y="228" text-anchor="middle" font-size="11" fill="#e67700" font-weight="700">+15%</text>
+  <text x="725" y="228" font-size="10" fill="#868e96">over Pingora</text>
+</svg>

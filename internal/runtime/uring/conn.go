@@ -15,14 +15,14 @@ import (
 type connState uint8
 
 const (
-	stFree connState = iota
-	stReadingRequest        // waiting for client request headers
-	stConnectingUp          // OP_CONNECT to upstream in flight (unused in v1: pre-dialed fds)
-	stSendingUpRequest      // writing the proxied request to upstream (header block + any piggyback body)
-	stSendingUpBody         // forwarding request body bytes to upstream (content-length or chunked)
-	stReadingUpResponse     // waiting for upstream response headers
-	stSendingClientResponse // writing the response back to the client
-	stClosing               // close op in flight; drop on completion
+	stFree                  connState = iota
+	stReadingRequest                  // waiting for client request headers
+	stConnectingUp                    // OP_CONNECT to upstream in flight (unused in v1: pre-dialed fds)
+	stSendingUpRequest                // writing the proxied request to upstream (header block + any piggyback body)
+	stSendingUpBody                   // forwarding request body bytes to upstream (content-length or chunked)
+	stReadingUpResponse               // waiting for upstream response headers
+	stSendingClientResponse           // writing the response back to the client
+	stClosing                         // close op in flight; drop on completion
 )
 
 // conn is the per-client state slab entry. Keep this struct cache-friendly;
@@ -37,12 +37,14 @@ type conn struct {
 	clientFD int32
 	upFD     int32
 	poolName string // which fdPool upFD came from, for release
+	clientIP string
+	routeID  int
 
 	// Read accumulator for client (request) and upstream (response).
 	// Fixed 16 KiB slabs; parser consumes from the head.
-	rdBuf     []byte // owned; len=cap=16384
-	rdFilled  int    // bytes currently in rdBuf
-	rdConsumed int   // bytes already consumed (header block size on parse success)
+	rdBuf      []byte // owned; len=cap=16384
+	rdFilled   int    // bytes currently in rdBuf
+	rdConsumed int    // bytes already consumed (header block size on parse success)
 
 	upRdBuf    []byte
 	upRdFilled int
@@ -50,9 +52,9 @@ type conn struct {
 	// Write buffers. We build the proxied request into wrBuf and the
 	// proxied response into upWrBuf. Both are 4 KiB fixed; oversize
 	// header blocks get 431.
-	wrBuf   []byte
-	wrLen   int // bytes queued to send to upstream
-	wrSent  int // bytes acked by the upstream send CQE
+	wrBuf  []byte
+	wrLen  int // bytes queued to send to upstream
+	wrSent int // bytes acked by the upstream send CQE
 
 	cliWrBuf  []byte
 	cliWrLen  int
@@ -134,6 +136,7 @@ func (c *conn) resetForKeepAlive() {
 	c.upBroken = false
 	c.upFD = -1
 	c.poolName = ""
+	c.routeID = -1
 	c.idleTicks = 0
 	c.spliceRemaining = 0
 	c.state = stReadingRequest

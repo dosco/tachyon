@@ -1,0 +1,159 @@
+intent_version "0.1"
+
+policy sample_headers {
+  priority 100
+  match req.host == "example.com"
+
+  request {
+    set_header("x-proxy", "tachyon")
+  }
+
+  response {
+    set_header("x-served-by", "tachyon")
+  }
+
+  case adds_headers {
+    request.method "GET"
+    request.host "example.com"
+    request.path "/"
+    expect.request_header "x-proxy", "tachyon"
+    expect.response_header "x-served-by", "tachyon"
+  }
+
+  budget {
+    request.allocs <= 1
+    response.allocs <= 0
+  }
+}
+
+policy sample_terminal {
+  priority 200
+  match req.path.has_prefix("/blocked")
+
+  request {
+    respond(451, "blocked by intent")
+  }
+
+  case blocks_prefix {
+    request.method "GET"
+    request.host "example.com"
+    request.path "/blocked/demo"
+    expect.status 451
+    expect.body "blocked by intent"
+  }
+
+  budget {
+    request.allocs <= 3
+  }
+}
+
+policy sample_rate_limit {
+  priority 150
+  match req.path.has_prefix("/limited")
+
+  request {
+    rate_limit_local("header:x-api-key", 1, 1)
+  }
+
+  case first_hit_allows {
+    request.method "GET"
+    request.host "example.com"
+    request.path "/limited"
+    request.header "x-api-key", "demo-key"
+  }
+}
+
+policy sample_query_filter {
+  priority 120
+  match req.path.has_prefix("/search") && req.query("debug") == "1"
+
+  request {
+    deny(403)
+  }
+
+  case debug_denied {
+    request.method "GET"
+    request.host "example.com"
+    request.path "/search"
+    request.query "debug", "1"
+    expect.status 403
+  }
+
+  case non_debug_allowed {
+    request.method "GET"
+    request.host "example.com"
+    request.path "/search"
+    request.query "debug", "0"
+  }
+}
+
+policy sample_cookie_auth {
+  priority 130
+  match req.path.has_prefix("/admin") && req.cookie("role") == "admin"
+
+  request {
+    set_header("x-role", "admin")
+  }
+
+  case admin_cookie_set {
+    request.method "GET"
+    request.host "example.com"
+    request.path "/admin/dashboard"
+    request.cookie "role", "admin"
+    expect.request_header "x-role", "admin"
+  }
+
+  budget {
+    request.allocs <= 1
+  }
+}
+
+policy sample_auth_external {
+  priority 250
+  match req.path.has_prefix("/secure")
+
+  request {
+    auth_external("http://authz.internal/check", 401)
+  }
+}
+
+policy sample_exact_path {
+  priority 110
+  match req.path == "/healthz"
+
+  request {
+    respond(200, "ok")
+  }
+
+  case healthz_exact {
+    request.method "GET"
+    request.host "example.com"
+    request.path "/healthz"
+    expect.status 200
+    expect.body "ok"
+  }
+
+  budget {
+    request.allocs <= 3
+  }
+}
+
+policy sample_suffix_match {
+  priority 105
+  match req.path.has_suffix(".json")
+
+  request {
+    set_header("accept", "application/json")
+  }
+
+  case json_suffix {
+    request.method "GET"
+    request.host "example.com"
+    request.path "/data/export.json"
+    expect.request_header "accept", "application/json"
+  }
+
+  budget {
+    request.allocs <= 1
+  }
+}

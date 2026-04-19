@@ -96,4 +96,34 @@ upstreams:
 	if wu[1].Weight != 2 {
 		t.Fatalf("weight preserved: got %d want 2", wu[1].Weight)
 	}
+	if c.Routes[0].RouteID != 0 {
+		t.Fatalf("route id: got %d want 0", c.Routes[0].RouteID)
+	}
+}
+
+func TestLoadPreservesIntentsAndRouteID(t *testing.T) {
+	p := writeConfig(t, `
+listen: ":0"
+routes:
+  - host: "h"
+    path: "/"
+    upstream: "a"
+    intents: ["api_guard", "tenant_headers"]
+upstreams:
+  a:
+    addrs: ["127.0.0.1:9000"]
+`)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := len(c.Routes[0].Intents); got != 2 {
+		t.Fatalf("intents: got %d want 2", got)
+	}
+	if c.Routes[0].Intents[0] != "api_guard" || c.Routes[0].Intents[1] != "tenant_headers" {
+		t.Fatalf("intents: got %v", c.Routes[0].Intents)
+	}
+	if c.Routes[0].RouteID != 0 {
+		t.Fatalf("route id: got %d want 0", c.Routes[0].RouteID)
+	}
 }

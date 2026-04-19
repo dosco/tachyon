@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 250" width="920" height="250"
+     font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <path d="M0,0 L0,7 L10,3.5 z" fill="#868e96"/>
+    </marker>
+    <marker id="arrRed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <path d="M0,0 L0,7 L10,3.5 z" fill="#e03131"/>
+    </marker>
+  </defs>
+
+  <!-- Page background -->
+  <rect width="920" height="250" fill="#ffffff" rx="10"/>
+
+  <!-- Worker boundary -->
+  <rect x="120" y="48" width="643" height="155" rx="10"
+        fill="#f8f9fa" stroke="#dee2e6" stroke-width="1.5" stroke-dasharray="7,4"/>
+  <text x="131" y="42" font-size="10.5" fill="#adb5bd" letter-spacing="0.2">
+    Worker process  ·  one per core  ·  GOMAXPROCS=1
+  </text>
+
+  <!-- ── Boxes ── -->
+
+  <!-- Client -->
+  <rect x="10" y="100" width="90" height="50" rx="8"
+        fill="#e7f5ff" stroke="#74c0fc" stroke-width="1.5"/>
+  <text x="55" y="121" text-anchor="middle" font-size="13" fill="#1c7ed6" font-weight="600">Client</text>
+
+  <!-- Listener -->
+  <rect x="142" y="88" width="122" height="63" rx="8"
+        fill="#f3f0ff" stroke="#9775fa" stroke-width="1.5"/>
+  <text x="203" y="114" text-anchor="middle" font-size="13" fill="#5f3dc4" font-weight="600">Listener</text>
+  <text x="203" y="131" text-anchor="middle" font-size="10" fill="#7950f2">io_uring · stdlib</text>
+
+  <!-- Router -->
+  <rect x="294" y="88" width="120" height="63" rx="8"
+        fill="#f3f0ff" stroke="#9775fa" stroke-width="1.5"/>
+  <text x="354" y="114" text-anchor="middle" font-size="13" fill="#5f3dc4" font-weight="600">Router</text>
+  <text x="354" y="131" text-anchor="middle" font-size="10" fill="#7950f2">radix tree</text>
+
+  <!-- Intent Engine (highlighted) -->
+  <rect x="444" y="84" width="150" height="74" rx="8"
+        fill="#fff9db" stroke="#fcc419" stroke-width="2"/>
+  <text x="519" y="110" text-anchor="middle" font-size="13" fill="#e67700" font-weight="700">Intent engine</text>
+  <text x="519" y="128" text-anchor="middle" font-size="10" fill="#f08c00">compiled policies</text>
+  <text x="519" y="146" text-anchor="middle" font-size="9.5" fill="#fab005">117 ns · 0 allocs on no-match</text>
+
+  <!-- Connection Pool -->
+  <rect x="624" y="88" width="118" height="63" rx="8"
+        fill="#f3f0ff" stroke="#9775fa" stroke-width="1.5"/>
+  <text x="683" y="114" text-anchor="middle" font-size="13" fill="#5f3dc4" font-weight="600">Pool</text>
+  <text x="683" y="131" text-anchor="middle" font-size="10" fill="#7950f2">p2c-EWMA LB</text>
+
+  <!-- Upstream -->
+  <rect x="798" y="100" width="100" height="50" rx="8"
+        fill="#ebfbee" stroke="#69db7c" stroke-width="1.5"/>
+  <text x="848" y="121" text-anchor="middle" font-size="13" fill="#2f9e44" font-weight="600">Upstream</text>
+
+  <!-- ── Arrows: main flow ── -->
+
+  <!-- Client → Listener -->
+  <line x1="100" y1="125" x2="140" y2="119"
+        stroke="#868e96" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Listener → Router -->
+  <line x1="264" y1="119" x2="292" y2="119"
+        stroke="#868e96" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Router → Intent Engine -->
+  <line x1="414" y1="119" x2="442" y2="119"
+        stroke="#868e96" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Intent Engine → Pool (pass-through) -->
+  <line x1="594" y1="119" x2="622" y2="119"
+        stroke="#868e96" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Pool → Upstream -->
+  <line x1="742" y1="119" x2="796" y2="125"
+        stroke="#868e96" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ── Terminal path ── -->
+
+  <!-- Down arrow from Intent Engine -->
+  <line x1="519" y1="158" x2="519" y2="196"
+        stroke="#e03131" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arrRed)"/>
+
+  <!-- Terminal label -->
+  <rect x="419" y="197" width="200" height="30" rx="6"
+        fill="#fff5f5" stroke="#ffc9c9" stroke-width="1.2"/>
+  <text x="519" y="217" text-anchor="middle" font-size="11" fill="#c92a2a" font-weight="500">
+    deny · respond · rate · redirect
+  </text>
+
+  <!-- Label: "terminal" on the red arrow -->
+  <text x="527" y="181" font-size="9.5" fill="#e03131">terminal</text>
+</svg>

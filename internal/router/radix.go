@@ -24,6 +24,7 @@ type node struct {
 	// Terminal target. Empty string and nil slice means structural-only.
 	upstream string
 	weighted []weightedEntry
+	routeID  int
 }
 
 // weightedEntry is one row of a terminal node's cumulative-weight
@@ -42,10 +43,11 @@ func (n *node) isTerminal() bool {
 
 // insert adds (prefix, target) to the tree rooted at n. Exactly one of
 // upstream or weighted must be non-zero; the caller is responsible.
-func (n *node) insert(prefix []byte, upstream string, weighted []weightedEntry) {
+func (n *node) insert(prefix []byte, upstream string, weighted []weightedEntry, routeID int) {
 	if len(prefix) == 0 {
 		n.upstream = upstream
 		n.weighted = weighted
+		n.routeID = routeID
 		return
 	}
 	for _, ch := range n.children {
@@ -54,7 +56,7 @@ func (n *node) insert(prefix []byte, upstream string, weighted []weightedEntry) 
 			continue
 		}
 		if i == len(ch.edge) {
-			ch.insert(prefix[i:], upstream, weighted)
+			ch.insert(prefix[i:], upstream, weighted, routeID)
 			return
 		}
 		// Split ch: create an intermediate node with edge = ch.edge[:i],
@@ -71,11 +73,13 @@ func (n *node) insert(prefix []byte, upstream string, weighted []weightedEntry) 
 		if i == len(prefix) {
 			mid.upstream = upstream
 			mid.weighted = weighted
+			mid.routeID = routeID
 		} else {
 			mid.children = append(mid.children, &node{
 				edge:     prefix[i:],
 				upstream: upstream,
 				weighted: weighted,
+				routeID:  routeID,
 			})
 		}
 		return
@@ -84,6 +88,7 @@ func (n *node) insert(prefix []byte, upstream string, weighted []weightedEntry) 
 		edge:     prefix,
 		upstream: upstream,
 		weighted: weighted,
+		routeID:  routeID,
 	})
 }
 

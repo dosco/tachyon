@@ -38,10 +38,27 @@ func TestMatchTable(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got := r.Match(c.host, []byte(c.path))
-			if got != c.want {
-				t.Fatalf("Match(%q,%q): got %q want %q", c.host, c.path, got, c.want)
+			if !got.Found || got.Upstream != c.want {
+				t.Fatalf("Match(%q,%q): got %+v want upstream %q", c.host, c.path, got, c.want)
+			}
+			if got.RouteID < 0 {
+				t.Fatalf("route id: got %+v", got)
 			}
 		})
+	}
+}
+
+func TestMatchCarriesStableRouteID(t *testing.T) {
+	r := New([]Rule{
+		{RouteID: 11, Host: "example.com", Path: "/api/", Upstream: "api"},
+		{RouteID: 99, Host: "*", Path: "/", Upstream: "default"},
+	})
+	got := r.Match("example.com", []byte("/api/x"))
+	if !got.Found {
+		t.Fatal("expected route match")
+	}
+	if got.RouteID != 11 {
+		t.Fatalf("route id: got %d want 11", got.RouteID)
 	}
 }
 
@@ -49,8 +66,8 @@ func TestMatchTable(t *testing.T) {
 // miss, not a panic.
 func TestMatchNoWildcardReturnsEmpty(t *testing.T) {
 	r := New([]Rule{{Host: "api.example.com", Path: "/v1/", Upstream: "api"}})
-	if got := r.Match("other.test", []byte("/")); got != "" {
-		t.Fatalf("unrouted Match: got %q want \"\"", got)
+	if got := r.Match("other.test", []byte("/")); got.Found {
+		t.Fatalf("unrouted Match: got %+v want miss", got)
 	}
 }
 
@@ -62,14 +79,14 @@ func TestMatchSplitsSharedPrefix(t *testing.T) {
 		{Host: "h", Path: "/foobar", Upstream: "fb"},
 		{Host: "h", Path: "/foo", Upstream: "f"},
 	})
-	if got := r.Match("h", []byte("/foobar")); got != "fb" {
-		t.Fatalf("long path: got %q want fb", got)
+	if got := r.Match("h", []byte("/foobar")); !got.Found || got.Upstream != "fb" {
+		t.Fatalf("long path: got %+v want fb", got)
 	}
-	if got := r.Match("h", []byte("/foo")); got != "f" {
-		t.Fatalf("short path: got %q want f", got)
+	if got := r.Match("h", []byte("/foo")); !got.Found || got.Upstream != "f" {
+		t.Fatalf("short path: got %+v want f", got)
 	}
-	if got := r.Match("h", []byte("/foop")); got != "f" {
-		t.Fatalf("prefix-of-longer path: got %q want f", got)
+	if got := r.Match("h", []byte("/foop")); !got.Found || got.Upstream != "f" {
+		t.Fatalf("prefix-of-longer path: got %+v want f", got)
 	}
 }
 
@@ -77,8 +94,8 @@ func TestMatchSplitsSharedPrefix(t *testing.T) {
 // treated like "*".
 func TestMatchEmptyHostUsesWildcard(t *testing.T) {
 	r := New([]Rule{{Host: "", Path: "/", Upstream: "default"}})
-	if got := r.Match("anything", []byte("/")); got != "default" {
-		t.Fatalf("got %q want default", got)
+	if got := r.Match("anything", []byte("/")); !got.Found || got.Upstream != "default" {
+		t.Fatalf("got %+v want default", got)
 	}
 }
 
@@ -91,8 +108,8 @@ func TestMatchWeightedSingletonCollapses(t *testing.T) {
 		Upstreams: []WeightedUpstream{{Name: "only", Weight: 3}},
 	}})
 	for i := 0; i < 100; i++ {
-		if got := r.Match("h", []byte("/")); got != "only" {
-			t.Fatalf("iter %d: got %q want only", i, got)
+		if got := r.Match("h", []byte("/")); !got.Found || got.Upstream != "only" {
+			t.Fatalf("iter %d: got %+v want only", i, got)
 		}
 	}
 }
@@ -111,7 +128,7 @@ func TestMatchWeightedDistribution(t *testing.T) {
 	counts := map[string]int{}
 	const N = 4000
 	for i := 0; i < N; i++ {
-		counts[r.Match("h", []byte("/"))]++
+		counts[r.Match("h", []byte("/")).Upstream]++
 	}
 	// Expect ~25% a, ~75% b.
 	if counts["a"]+counts["b"] != N {
@@ -136,7 +153,7 @@ func TestMatchWeightedZeroWeightIsOne(t *testing.T) {
 	}})
 	sawA, sawB := false, false
 	for i := 0; i < 500 && (!sawA || !sawB); i++ {
-		switch r.Match("h", []byte("/")) {
+		switch r.Match("h", []byte("/")).Upstream {
 		case "a":
 			sawA = true
 		case "b":

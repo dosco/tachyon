@@ -1,0 +1,43 @@
+intent_version "0.1"
+
+# Rate limit public API endpoints by API key header.
+# Gold-tier keys: 1000 req/s, Silver-tier keys: 100 req/s via separate policies.
+policy api_rate_limit_gold {
+  priority 160
+  match req.path.has_prefix("/api/") && req.header("x-tier") == "gold"
+
+  request {
+    rate_limit_local("header:x-api-key", 1000, 2000)
+  }
+
+  case first_hit_allowed {
+    request.path "/api/users"
+    request.header "x-tier", "gold"
+    request.header "x-api-key", "gold-key-001"
+  }
+}
+
+policy api_rate_limit_silver {
+  priority 155
+  match req.path.has_prefix("/api/") && req.header("x-tier") == "silver"
+
+  request {
+    rate_limit_local("header:x-api-key", 100, 200)
+  }
+
+  case first_hit_allowed {
+    request.path "/api/users"
+    request.header "x-tier", "silver"
+    request.header "x-api-key", "silver-key-001"
+  }
+}
+
+# Global IP-based limit as a backstop for unauthenticated callers.
+policy global_ip_limit {
+  priority 50
+  match req.path.has_prefix("/api/")
+
+  request {
+    rate_limit_local("ip", 20, 40)
+  }
+}

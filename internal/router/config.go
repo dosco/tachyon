@@ -18,6 +18,12 @@ type Rule struct {
 	Path      string             `yaml:"path"`
 	Upstream  string             `yaml:"upstream"`
 	Upstreams []WeightedUpstream `yaml:"upstreams"`
+	Intents   []string           `yaml:"intents"`
+
+	// RouteID is assigned from source order at load time. It is not part
+	// of the YAML shape; generated intent registries use it to bind
+	// route-local programs to the router's match result.
+	RouteID int `yaml:"-"`
 }
 
 // WeightedUpstream is one entry in a Rule's weighted multi-upstream
@@ -122,6 +128,7 @@ func Load(path string) (*Config, error) {
 		return nil, errors.New("router: config has no routes")
 	}
 	for i, rule := range c.Routes {
+		rule.RouteID = i
 		hasSingle := rule.Upstream != ""
 		hasMulti := len(rule.Upstreams) > 0
 		if hasSingle && hasMulti {
@@ -142,8 +149,8 @@ func Load(path string) (*Config, error) {
 					rule.Upstreams[j].Weight = 1
 				}
 			}
-			c.Routes[i] = rule
 		}
+		c.Routes[i] = rule
 	}
 	return &c, nil
 }

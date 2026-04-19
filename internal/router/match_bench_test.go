@@ -13,7 +13,7 @@ func BenchmarkMatchSimple(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = r.Match("example.com", p)
+		_ = r.Match("example.com", p).Upstream
 	}
 }
 
@@ -30,7 +30,7 @@ func BenchmarkMatchHostSpecific(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = r.Match("a.example", p)
+		_ = r.Match("a.example", p).Upstream
 	}
 }
 
@@ -49,6 +49,6 @@ func BenchmarkMatchWeightedTwo(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = r.Match("example.com", p)
+		_ = r.Match("example.com", p).Upstream
 	}
 }

@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 340" width="920" height="340"
+     font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="arr2" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <path d="M0,0 L0,7 L10,3.5 z" fill="#868e96"/>
+    </marker>
+    <marker id="arr2v" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <path d="M0,0 L0,7 L10,3.5 z" fill="#9775fa"/>
+    </marker>
+    <marker id="arr2g" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <path d="M0,0 L0,7 L10,3.5 z" fill="#40c057"/>
+    </marker>
+  </defs>
+
+  <rect width="920" height="340" fill="#ffffff" rx="10"/>
+
+  <text x="30" y="30" font-size="14" fill="#212529" font-weight="700" letter-spacing="0.2">
+    Authored by human or LLM  ·  same compiler, same tests, same binary
+  </text>
+
+  <!-- ── Lane A: LLM ── -->
+  <g transform="translate(0,56)">
+    <!-- Lane label -->
+    <rect x="16" y="10" width="890" height="110" rx="10" fill="#f3f0ff" stroke="#d0bfff" stroke-width="1" stroke-dasharray="5,3"/>
+    <text x="28" y="30" font-size="11" fill="#7950f2" font-weight="600" letter-spacing="0.3">LANE A  ·  LLM OPERATOR</text>
+
+    <!-- LLM -->
+    <rect x="36" y="45" width="120" height="56" rx="8" fill="#fff9db" stroke="#fcc419" stroke-width="1.5"/>
+    <text x="96" y="69" text-anchor="middle" font-size="12" fill="#e67700" font-weight="700">LLM agent</text>
+    <text x="96" y="86" text-anchor="middle" font-size="10" fill="#f08c00">natural-language prompt</text>
+
+    <!-- Arrow -->
+    <line x1="158" y1="73" x2="196" y2="73" stroke="#9775fa" stroke-width="1.5" marker-end="url(#arr2v)"/>
+
+    <!-- .intent file -->
+    <rect x="198" y="45" width="136" height="56" rx="8" fill="#ffffff" stroke="#9775fa" stroke-width="1.5"/>
+    <text x="266" y="69" text-anchor="middle" font-size="12" fill="#5f3dc4" font-weight="600">routes.intent</text>
+    <text x="266" y="86" text-anchor="middle" font-size="10" fill="#7950f2">generated DSL</text>
+
+    <line x1="336" y1="73" x2="372" y2="73" stroke="#9775fa" stroke-width="1.5" marker-end="url(#arr2v)"/>
+
+    <!-- tachyon intent build -->
+    <rect x="374" y="45" width="160" height="56" rx="8" fill="#f3f0ff" stroke="#9775fa" stroke-width="1.5"/>
+    <text x="454" y="68" text-anchor="middle" font-size="12" fill="#5f3dc4" font-weight="700">tachyon intent build</text>
+    <text x="454" y="85" text-anchor="middle" font-size="10" fill="#7950f2">sema  ·  codegen</text>
+
+    <line x1="536" y1="73" x2="572" y2="73" stroke="#9775fa" stroke-width="1.5" marker-end="url(#arr2v)"/>
+
+    <!-- go test -->
+    <rect x="574" y="45" width="136" height="56" rx="8" fill="#ebfbee" stroke="#69db7c" stroke-width="1.5"/>
+    <text x="642" y="68" text-anchor="middle" font-size="12" fill="#2f9e44" font-weight="700">go test ✓</text>
+    <text x="642" y="85" text-anchor="middle" font-size="10" fill="#40c057">alloc budgets pass</text>
+
+    <line x1="712" y1="73" x2="748" y2="73" stroke="#40c057" stroke-width="1.5" marker-end="url(#arr2g)"/>
+
+    <!-- deploy -->
+    <rect x="750" y="45" width="140" height="56" rx="8" fill="#ebfbee" stroke="#69db7c" stroke-width="1.5"/>
+    <text x="820" y="69" text-anchor="middle" font-size="12" fill="#2f9e44" font-weight="700">binary shipped</text>
+    <text x="820" y="86" text-anchor="middle" font-size="10" fill="#40c057">PGO-rebuilt</text>
+  </g>
+
+  <!-- ── Lane B: Human ── -->
+  <g transform="translate(0,186)">
+    <rect x="16" y="10" width="890" height="110" rx="10" fill="#f8f9fa" stroke="#dee2e6" stroke-width="1" stroke-dasharray="5,3"/>
+    <text x="28" y="30" font-size="11" fill="#495057" font-weight="600" letter-spacing="0.3">LANE B  ·  HUMAN OPERATOR</text>
+
+    <!-- Human -->
+    <rect x="36" y="45" width="120" height="56" rx="8" fill="#e7f5ff" stroke="#74c0fc" stroke-width="1.5"/>
+    <text x="96" y="69" text-anchor="middle" font-size="12" fill="#1c7ed6" font-weight="700">SRE / dev</text>
+    <text x="96" y="86" text-anchor="middle" font-size="10" fill="#228be6">edits .intent file</text>
+
+    <line x1="158" y1="73" x2="196" y2="73" stroke="#868e96" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+    <rect x="198" y="45" width="136" height="56" rx="8" fill="#ffffff" stroke="#adb5bd" stroke-width="1.5"/>
+    <text x="266" y="69" text-anchor="middle" font-size="12" fill="#495057" font-weight="600">routes.intent</text>
+    <text x="266" y="86" text-anchor="middle" font-size="10" fill="#868e96">hand-written DSL</text>
+
+    <line x1="336" y1="73" x2="372" y2="73" stroke="#868e96" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+    <rect x="374" y="45" width="160" height="56" rx="8" fill="#f3f0ff" stroke="#9775fa" stroke-width="1.5"/>
+    <text x="454" y="68" text-anchor="middle" font-size="12" fill="#5f3dc4" font-weight="700">tachyon intent build</text>
+    <text x="454" y="85" text-anchor="middle" font-size="10" fill="#7950f2">same pipeline</text>
+
+    <line x1="536" y1="73" x2="572" y2="73" stroke="#868e96" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+    <rect x="574" y="45" width="136" height="56" rx="8" fill="#ebfbee" stroke="#69db7c" stroke-width="1.5"/>
+    <text x="642" y="68" text-anchor="middle" font-size="12" fill="#2f9e44" font-weight="700">go test ✓</text>
+    <text x="642" y="85" text-anchor="middle" font-size="10" fill="#40c057">same guarantees</text>
+
+    <line x1="712" y1="73" x2="748" y2="73" stroke="#40c057" stroke-width="1.5" marker-end="url(#arr2g)"/>
+
+    <rect x="750" y="45" width="140" height="56" rx="8" fill="#ebfbee" stroke="#69db7c" stroke-width="1.5"/>
+    <text x="820" y="69" text-anchor="middle" font-size="12" fill="#2f9e44" font-weight="700">binary shipped</text>
+    <text x="820" y="86" text-anchor="middle" font-size="10" fill="#40c057">same binary</text>
+  </g>
+
+  <!-- Footer callout -->
+  <rect x="16" y="308" width="890" height="26" rx="6" fill="#fff9db" stroke="#fcc419" stroke-width="1"/>
+  <text x="461" y="326" text-anchor="middle" font-size="11.5" fill="#e67700" font-weight="600">
+    The intent DSL compiles to plain Go.  Either author can be wrong — the compiler and test suite catch it before deploy.
+  </text>
+</svg>

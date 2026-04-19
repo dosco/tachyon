@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 340" width="920" height="340"
+     font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="warr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <path d="M0,0 L0,7 L10,3.5 z" fill="#868e96"/>
+    </marker>
+  </defs>
+
+  <rect width="920" height="340" fill="#ffffff" rx="10"/>
+
+  <text x="30" y="30" font-size="14" fill="#212529" font-weight="700" letter-spacing="0.2">
+    Process-per-core worker model  ·  no shared heap, no cross-core locks
+  </text>
+
+  <!-- Kernel socket -->
+  <rect x="60" y="62" width="800" height="52" rx="8" fill="#f8f9fa" stroke="#adb5bd" stroke-width="1.5"/>
+  <text x="460" y="87" text-anchor="middle" font-size="13" fill="#495057" font-weight="700">Linux kernel  ·  SO_REUSEPORT listener</text>
+  <text x="460" y="105" text-anchor="middle" font-size="10.5" fill="#868e96">incoming TCP load-balanced 4-tuple hash across workers</text>
+
+  <!-- Four arrows down from kernel to workers -->
+  <g stroke="#868e96" stroke-width="1.5">
+    <line x1="180" y1="114" x2="180" y2="146" marker-end="url(#warr)"/>
+    <line x1="380" y1="114" x2="380" y2="146" marker-end="url(#warr)"/>
+    <line x1="580" y1="114" x2="580" y2="146" marker-end="url(#warr)"/>
+    <line x1="780" y1="114" x2="780" y2="146" marker-end="url(#warr)"/>
+  </g>
+
+  <!-- Four workers -->
+  <g font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
+    <!-- worker 1 -->
+    <rect x="104" y="148" width="152" height="130" rx="8" fill="#f3f0ff" stroke="#9775fa" stroke-width="1.5"/>
+    <text x="180" y="170" text-anchor="middle" font-size="12" fill="#5f3dc4" font-weight="700">Worker 0</text>
+    <text x="180" y="186" text-anchor="middle" font-size="10" fill="#7950f2">CPU 0  ·  pinned</text>
+    <line x1="120" y1="196" x2="240" y2="196" stroke="#d0bfff"/>
+    <text x="180" y="213" text-anchor="middle" font-size="10" fill="#5f3dc4">GOMAXPROCS=1</text>
+    <text x="180" y="229" text-anchor="middle" font-size="10" fill="#5f3dc4">isolated GC</text>
+    <text x="180" y="245" text-anchor="middle" font-size="10" fill="#5f3dc4">own heap</text>
+    <text x="180" y="265" text-anchor="middle" font-size="9.5" fill="#7950f2" font-style="italic">io_uring ring</text>
+
+    <!-- worker 2 -->
+    <rect x="304" y="148" width="152" height="130" rx="8" fill="#f3f0ff" stroke="#9775fa" stroke-width="1.5"/>
+    <text x="380" y="170" text-anchor="middle" font-size="12" fill="#5f3dc4" font-weight="700">Worker 1</text>
+    <text x="380" y="186" text-anchor="middle" font-size="10" fill="#7950f2">CPU 1  ·  pinned</text>
+    <line x1="320" y1="196" x2="440" y2="196" stroke="#d0bfff"/>
+    <text x="380" y="213" text-anchor="middle" font-size="10" fill="#5f3dc4">GOMAXPROCS=1</text>
+    <text x="380" y="229" text-anchor="middle" font-size="10" fill="#5f3dc4">isolated GC</text>
+    <text x="380" y="245" text-anchor="middle" font-size="10" fill="#5f3dc4">own heap</text>
+    <text x="380" y="265" text-anchor="middle" font-size="9.5" fill="#7950f2" font-style="italic">io_uring ring</text>
+
+    <!-- worker 3 -->
+    <rect x="504" y="148" width="152" height="130" rx="8" fill="#f3f0ff" stroke="#9775fa" stroke-width="1.5"/>
+    <text x="580" y="170" text-anchor="middle" font-size="12" fill="#5f3dc4" font-weight="700">Worker 2</text>
+    <text x="580" y="186" text-anchor="middle" font-size="10" fill="#7950f2">CPU 2  ·  pinned</text>
+    <line x1="520" y1="196" x2="640" y2="196" stroke="#d0bfff"/>
+    <text x="580" y="213" text-anchor="middle" font-size="10" fill="#5f3dc4">GOMAXPROCS=1</text>
+    <text x="580" y="229" text-anchor="middle" font-size="10" fill="#5f3dc4">isolated GC</text>
+    <text x="580" y="245" text-anchor="middle" font-size="10" fill="#5f3dc4">own heap</text>
+    <text x="580" y="265" text-anchor="middle" font-size="9.5" fill="#7950f2" font-style="italic">io_uring ring</text>
+
+    <!-- worker N -->
+    <rect x="704" y="148" width="152" height="130" rx="8" fill="#f3f0ff" stroke="#9775fa" stroke-width="1.5" stroke-dasharray="5,3"/>
+    <text x="780" y="170" text-anchor="middle" font-size="12" fill="#5f3dc4" font-weight="700">Worker N-1</text>
+    <text x="780" y="186" text-anchor="middle" font-size="10" fill="#7950f2">CPU N-1  ·  pinned</text>
+    <line x1="720" y1="196" x2="840" y2="196" stroke="#d0bfff"/>
+    <text x="780" y="213" text-anchor="middle" font-size="10" fill="#5f3dc4">…one per core</text>
+    <text x="780" y="233" text-anchor="middle" font-size="9" fill="#adb5bd">fork() on startup</text>
+  </g>
+
+  <!-- Bottom kernel-feature tag row -->
+  <g font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
+    <text x="30" y="302" font-size="11" fill="#495057" font-weight="600">Kernel features used:</text>
+
+    <rect x="168" y="289" width="76" height="22" rx="11" fill="#fff9db" stroke="#fcc419" stroke-width="1"/>
+    <text x="206" y="304" text-anchor="middle" font-size="11" fill="#e67700" font-weight="600">io_uring</text>
+
+    <rect x="252" y="289" width="52" height="22" rx="11" fill="#fff9db" stroke="#fcc419" stroke-width="1"/>
+    <text x="278" y="304" text-anchor="middle" font-size="11" fill="#e67700" font-weight="600">kTLS</text>
+
+    <rect x="312" y="289" width="84" height="22" rx="11" fill="#fff9db" stroke="#fcc419" stroke-width="1"/>
+    <text x="354" y="304" text-anchor="middle" font-size="11" fill="#e67700" font-weight="600">SEND_ZC</text>
+
+    <rect x="404" y="289" width="70" height="22" rx="11" fill="#fff9db" stroke="#fcc419" stroke-width="1"/>
+    <text x="439" y="304" text-anchor="middle" font-size="11" fill="#e67700" font-weight="600">SPLICE</text>
+
+    <rect x="482" y="289" width="116" height="22" rx="11" fill="#fff9db" stroke="#fcc419" stroke-width="1"/>
+    <text x="540" y="304" text-anchor="middle" font-size="11" fill="#e67700" font-weight="600">SO_REUSEPORT</text>
+
+    <rect x="606" y="289" width="110" height="22" rx="11" fill="#fff9db" stroke="#fcc419" stroke-width="1"/>
+    <text x="661" y="304" text-anchor="middle" font-size="11" fill="#e67700" font-weight="600">CPU affinity</text>
+
+    <rect x="724" y="289" width="162" height="22" rx="11" fill="#fff9db" stroke="#fcc419" stroke-width="1"/>
+    <text x="805" y="304" text-anchor="middle" font-size="11" fill="#e67700" font-weight="600">stdlib fallback (non-Linux)</text>
+  </g>
+
+  <text x="30" y="330" font-size="10" fill="#868e96">
+    No worker shares heap with another. GC pauses stay in the tens of microseconds because each heap is small.
+  </text>
+</svg>
