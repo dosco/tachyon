@@ -16,6 +16,37 @@ var _ = time.Second
 func LoadConfig() *router.Config {
 	return &router.Config{
 		Listen: ":8080",
+		Upstreams: map[string]router.Upstream{
+			"origin": {
+				Addrs:          []string{"127.0.0.1:18080"},
+				IdlePerHost:    512,
+				ConnectTimeout: 1000000000,
+			},
+		},
+		Routes: []router.Rule{
+			{
+				Name:     "example_workflow",
+				Host:     "example.local",
+				Path:     "/",
+				Upstream: "origin",
+				Intents:  []string{"example_block_admin_debug", "example_proxy_headers"},
+				RouteID:  0,
+			},
+			{
+				Name:     "sample_com",
+				Host:     "example.com",
+				Path:     "/",
+				Upstream: "origin",
+				RouteID:  1,
+			},
+			{
+				Name:     "catchall",
+				Host:     "*",
+				Path:     "/",
+				Upstream: "origin",
+				RouteID:  2,
+			},
+		},
 	}
 }
 

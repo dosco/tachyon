@@ -12,10 +12,10 @@ func TestConfigLoads(t *testing.T) {
 	if cfg.Listen != ":8080" {
 		t.Fatalf("listen: got %q", cfg.Listen)
 	}
-	if got := len(cfg.Routes); got != 0 {
-		t.Fatalf("routes: got %d want 0", got)
+	if got := len(cfg.Routes); got != 3 {
+		t.Fatalf("routes: got %d want 3", got)
 	}
-	if got := len(cfg.Upstreams); got != 0 {
-		t.Fatalf("upstreams: got %d want 0", got)
+	if got := len(cfg.Upstreams); got != 1 {
+		t.Fatalf("upstreams: got %d want 1", got)
 	}
 }
