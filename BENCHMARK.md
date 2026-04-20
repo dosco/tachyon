@@ -69,10 +69,12 @@ rest of the proxy. The stack implements RFC 9000/9001/9002 (transport, TLS, reco
 (HTTP/3 framing), and RFC 9204 (QPACK) on top of Go's stdlib UDP socket. io_uring UDP is
 deferred; stdlib `net.ListenUDP` is the v1 path.
 
-Early loopback tests work end-to-end with `curl --http3` and `h2load`; a comparable table against
-an H3-capable nginx / quic-go control is still being produced. Script: [`bench/run-h3.sh`](bench/run-h3.sh).
-When numbers land they'll slot into this document alongside the TLS table above — the expectation
-is "competitive throughput, latency dominated by the UDP stack rather than the proxy."
+Current validation is Go unit tests only (`go test ./quic/... ./http3/...`): handshake, flow
+control, recovery, QPACK round-trips, and an in-process HTTP/3 "hello world" over the real QUIC
+stack. **No interop run against a third-party H3 client has been done, and no throughput numbers
+against nginx or Pingora exist yet** — anything you see claimed otherwise is aspirational.
+Script: [`bench/run-h3.sh`](bench/run-h3.sh), ready to execute once the GCE pair is up. Until
+that row lands here, treat H3 support as "compiles, unit-tested, not benchmarked."
 
 ### Go's garbage collector — not the bottleneck you were told it was
 
