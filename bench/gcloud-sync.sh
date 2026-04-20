@@ -26,8 +26,8 @@ rm -f "$TARBALL"
 tar czf "$TARBALL" \
   --exclude='.git' \
   --exclude='results' \
-  README.md go.mod go.sum config.yaml config.yaml.example \
-  cmd buf http1 http2 iouring internal tlsutil metrics bench docs
+  README.md go.mod go.sum \
+  cmd buf http1 http2 http3 quic iouring internal intent tlsutil metrics bench docs
 
 echo "sending $(du -h "$TARBALL" | cut -f1) -> $NAME:$ZONE..."
 gcloud compute scp --zone="$ZONE" "$TARBALL" "$NAME:/tmp/tachyon-src.tgz" >/dev/null

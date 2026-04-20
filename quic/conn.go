@@ -742,6 +742,8 @@ func (c *connState) flushInitial() error {
 		Number: pn, Space: recovery.SpaceInitial, SentTime: time.Now(),
 		Size: len(raw), AckEliciting: true, InFlight: true,
 	})
+	c.cc.OnSent(len(raw))
+	c.bytesInFlight += len(raw)
 	return nil
 }
 
@@ -787,6 +789,8 @@ func (c *connState) flushHandshake() error {
 		Number: pn, Space: recovery.SpaceHandshake, SentTime: time.Now(),
 		Size: len(raw), AckEliciting: true, InFlight: true,
 	})
+	c.cc.OnSent(len(raw))
+	c.bytesInFlight += len(raw)
 	return nil
 }
 
