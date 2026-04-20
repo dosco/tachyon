@@ -1,54 +1,95 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 280" width="920" height="280"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 360" width="920" height="360"
      font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
-  <rect width="920" height="280" fill="#ffffff" rx="10"/>
+  <rect width="920" height="360" fill="#ffffff" rx="10"/>
 
-  <text x="30" y="34" font-size="14" fill="#212529" font-weight="700" letter-spacing="0.2">
-    Tail latency  ·  burst load, 512 conns, plaintext GET
+  <text x="30" y="36" font-size="16" fill="#212529" font-weight="700">
+    Worst request time, under load
   </text>
-  <text x="30" y="52" font-size="10.5" fill="#868e96">
-    max request latency, milliseconds  ·  lower is better  ·  tail behavior under stress
+  <text x="30" y="56" font-size="11" fill="#868e96">
+    slowest request seen during the run  ·  lower is better  ·  milliseconds
   </text>
 
-  <line x1="150" y1="90" x2="150" y2="220" stroke="#dee2e6" stroke-width="1"/>
-  <line x1="274" y1="90" x2="274" y2="220" stroke="#f1f3f5" stroke-width="1"/>
-  <line x1="398" y1="90" x2="398" y2="220" stroke="#f1f3f5" stroke-width="1"/>
-  <line x1="522" y1="90" x2="522" y2="220" stroke="#f1f3f5" stroke-width="1"/>
-  <line x1="646" y1="90" x2="646" y2="220" stroke="#f1f3f5" stroke-width="1"/>
-  <line x1="770" y1="90" x2="770" y2="220" stroke="#dee2e6" stroke-width="1"/>
+  <!-- Legend -->
+  <rect x="640" y="28" width="12" height="12" rx="2" fill="#ced4da"/>
+  <text x="658" y="38" font-size="11" fill="#495057">nginx</text>
+  <rect x="710" y="28" width="12" height="12" rx="2" fill="#adb5bd"/>
+  <text x="728" y="38" font-size="11" fill="#495057">Pingora (Rust)</text>
+  <rect x="830" y="28" width="12" height="12" rx="2" fill="#9775fa"/>
+  <text x="848" y="38" font-size="11" fill="#5f3dc4" font-weight="700">tachyon (Go)</text>
 
-  <text x="274" y="237" text-anchor="middle" font-size="9.5" fill="#adb5bd">4 ms</text>
-  <text x="398" y="237" text-anchor="middle" font-size="9.5" fill="#adb5bd">8 ms</text>
-  <text x="522" y="237" text-anchor="middle" font-size="9.5" fill="#adb5bd">12 ms</text>
-  <text x="646" y="237" text-anchor="middle" font-size="9.5" fill="#adb5bd">16 ms</text>
-  <text x="770" y="237" text-anchor="middle" font-size="9.5" fill="#adb5bd">20 ms</text>
+  <!-- Scale 0..50ms over x=220..780 (560px / 50ms = 11.2 px per ms) -->
+  <line x1="220" y1="90" x2="220" y2="320" stroke="#dee2e6" stroke-width="1"/>
+  <line x1="332" y1="90" x2="332" y2="320" stroke="#f1f3f5" stroke-width="1"/>
+  <line x1="444" y1="90" x2="444" y2="320" stroke="#f1f3f5" stroke-width="1"/>
+  <line x1="556" y1="90" x2="556" y2="320" stroke="#f1f3f5" stroke-width="1"/>
+  <line x1="668" y1="90" x2="668" y2="320" stroke="#f1f3f5" stroke-width="1"/>
+  <line x1="780" y1="90" x2="780" y2="320" stroke="#dee2e6" stroke-width="1"/>
 
-  <!-- Axis break zone -->
-  <rect x="780" y="85" width="22" height="140" fill="#ffffff"/>
-  <line x1="782" y1="85" x2="776" y2="225" stroke="#dee2e6" stroke-width="1.2"/>
-  <line x1="798" y1="85" x2="792" y2="225" stroke="#dee2e6" stroke-width="1.2"/>
+  <!-- Axis break -->
+  <rect x="790" y="85" width="20" height="235" fill="#ffffff"/>
+  <line x1="792" y1="85" x2="786" y2="320" stroke="#dee2e6" stroke-width="1.2"/>
+  <line x1="806" y1="85" x2="800" y2="320" stroke="#dee2e6" stroke-width="1.2"/>
 
-  <!-- Scale 0..20ms over x=150..x=770 (620px / 20ms = 31 px per ms) -->
+  <text x="332" y="337" text-anchor="middle" font-size="10" fill="#adb5bd">10 ms</text>
+  <text x="444" y="337" text-anchor="middle" font-size="10" fill="#adb5bd">20 ms</text>
+  <text x="556" y="337" text-anchor="middle" font-size="10" fill="#adb5bd">30 ms</text>
+  <text x="668" y="337" text-anchor="middle" font-size="10" fill="#adb5bd">40 ms</text>
+  <text x="780" y="337" text-anchor="middle" font-size="10" fill="#adb5bd">50 ms</text>
 
-  <!-- nginx: 8.26 ms → 150 + 256 = 406 -->
-  <text x="140" y="112" text-anchor="end" font-size="12" fill="#495057" font-weight="500">nginx</text>
-  <rect x="150" y="98" width="256" height="22" rx="3" fill="#ced4da"/>
-  <text x="415" y="114" font-size="11" fill="#495057">8.26 ms</text>
+  <!-- Row 1: Plain HTTP GET burst -->
+  <text x="210" y="108" text-anchor="end" font-size="12" fill="#212529" font-weight="600">Plain HTTP, burst</text>
+  <text x="210" y="124" text-anchor="end" font-size="10" fill="#868e96">512 clients hammering at once</text>
+  <!-- nginx 8.18 ms => 220 + 8.18*11.2 = 220+92 = 312 -->
+  <rect x="220" y="96" width="92" height="14" rx="2" fill="#ced4da"/>
+  <text x="320" y="107" font-size="10" fill="#495057">8.2 ms</text>
+  <!-- Pingora has been observed spiking to 4000 ms on this burst (earlier run); here show run-2 max 8.09 ms but note spike -->
+  <rect x="220" y="112" width="91" height="14" rx="2" fill="#adb5bd"/>
+  <text x="320" y="123" font-size="10" fill="#495057">8.1 ms (but has spiked to 4,000 ms)</text>
+  <!-- tachyon 18.27 ms => 220 + 205 = 425 -->
+  <rect x="220" y="128" width="205" height="14" rx="2" fill="#9775fa"/>
+  <text x="434" y="139" font-size="10" fill="#5f3dc4" font-weight="700">18.3 ms</text>
 
-  <!-- tachyon: 12.42 ms → 150 + 385 = 535 -->
-  <text x="140" y="152" text-anchor="end" font-size="12" fill="#5f3dc4" font-weight="700">tachyon</text>
-  <rect x="150" y="138" width="385" height="26" rx="3" fill="#9775fa"/>
-  <text x="544" y="156" font-size="12" fill="#5f3dc4" font-weight="700">12.42 ms</text>
+  <!-- Row 2: HTTPS H1 -->
+  <text x="210" y="178" text-anchor="end" font-size="12" fill="#212529" font-weight="600">HTTPS</text>
+  <text x="210" y="194" text-anchor="end" font-size="10" fill="#868e96">TLS 1.3 handshake + GET</text>
+  <!-- nginx 88.15 ms — past axis; cap at 50ms + note -->
+  <rect x="220" y="166" width="560" height="14" rx="2" fill="#ced4da"/>
+  <polygon points="780,166 792,170 780,174 792,178 780,180" fill="#ced4da"/>
+  <rect x="813" y="160" width="90" height="26" rx="5" fill="#fff5f5" stroke="#ff6b6b" stroke-width="1.2"/>
+  <text x="858" y="171" text-anchor="middle" font-size="10" fill="#c92a2a" font-weight="700">88 ms</text>
+  <text x="858" y="182" text-anchor="middle" font-size="9" fill="#e03131">off chart</text>
+  <!-- Pingora n/a -->
+  <text x="228" y="193" font-size="10" fill="#adb5bd">Pingora bench has no TLS setup</text>
+  <!-- tachyon 86.33 ms — same treatment -->
+  <rect x="220" y="198" width="560" height="14" rx="2" fill="#9775fa"/>
+  <polygon points="780,198 792,202 780,206 792,210 780,212" fill="#9775fa"/>
+  <rect x="813" y="192" width="90" height="26" rx="5" fill="#fff5f5" stroke="#ff6b6b" stroke-width="1.2"/>
+  <text x="858" y="203" text-anchor="middle" font-size="10" fill="#c92a2a" font-weight="700">86 ms</text>
+  <text x="858" y="214" text-anchor="middle" font-size="9" fill="#e03131">off chart</text>
 
-  <!-- Pingora: 4,010 ms — off-chart red bar with jagged break -->
-  <text x="140" y="192" text-anchor="end" font-size="12" fill="#c92a2a" font-weight="600">Pingora</text>
-  <rect x="150" y="178" width="625" height="22" rx="3" fill="#ffa8a8"/>
-  <polygon points="775,178 788,182 775,186 788,190 775,194 788,198 775,200" fill="#ffa8a8" stroke="none"/>
+  <!-- Row 3: Small POST -->
+  <text x="210" y="248" text-anchor="end" font-size="12" fill="#212529" font-weight="600">Small POSTs</text>
+  <text x="210" y="264" text-anchor="end" font-size="10" fill="#868e96">1 KB request body</text>
+  <!-- nginx 2.33 ms => 220 + 26 = 246 -->
+  <rect x="220" y="236" width="26" height="14" rx="2" fill="#ced4da"/>
+  <text x="255" y="247" font-size="10" fill="#495057">2.3 ms</text>
+  <!-- Pingora 3.33 ms => 220 + 37 = 257 -->
+  <rect x="220" y="252" width="37" height="14" rx="2" fill="#adb5bd"/>
+  <text x="266" y="263" font-size="10" fill="#495057">3.3 ms</text>
+  <!-- tachyon 2.87 ms => 220 + 32 = 252 -->
+  <rect x="220" y="268" width="32" height="14" rx="2" fill="#9775fa"/>
+  <text x="261" y="279" font-size="10" fill="#5f3dc4" font-weight="700">2.9 ms</text>
 
-  <rect x="810" y="172" width="92" height="34" rx="6" fill="#fff5f5" stroke="#ff6b6b" stroke-width="1.5"/>
-  <text x="856" y="188" text-anchor="middle" font-size="12" fill="#c92a2a" font-weight="700">💀 4,010 ms</text>
-  <text x="856" y="201" text-anchor="middle" font-size="9" fill="#e03131">off chart</text>
-
-  <text x="30" y="264" font-size="10" fill="#868e96">
-    Under the same burst, Pingora's worst request took 4 seconds. nginx and tachyon both absorbed the burst under 15 ms.
-  </text>
+  <!-- Row 4: Large upload — the nginx disaster story -->
+  <text x="210" y="318" text-anchor="end" font-size="12" fill="#212529" font-weight="600">Large uploads</text>
+  <text x="210" y="334" text-anchor="end" font-size="10" fill="#868e96">64 KB request body</text>
+  <!-- nginx 43.69 ms => 220 + 489 = 709 -->
+  <rect x="220" y="306" width="489" height="14" rx="2" fill="#ffa8a8"/>
+  <text x="718" y="317" font-size="10" fill="#c92a2a" font-weight="700">43.7 ms 💀</text>
+  <!-- Pingora 3.67 ms => 220 + 41 = 261 -->
+  <rect x="220" y="322" width="41" height="14" rx="2" fill="#adb5bd"/>
+  <text x="270" y="333" font-size="10" fill="#495057">3.7 ms</text>
+  <!-- tachyon 3.91 ms => 220 + 44 = 264 -->
+  <rect x="220" y="338" width="44" height="14" rx="2" fill="#9775fa"/>
+  <text x="273" y="349" font-size="10" fill="#5f3dc4" font-weight="700">3.9 ms</text>
 </svg>

@@ -8,18 +8,21 @@
 
 ### Rust-class throughput, in Go.
 
-On a 16-core GCE box, same workloads, stock configs: tachyon sits a few percent
-behind Rust's Pingora on plaintext H1 and ahead of nginx, ties nginx on TLS, and on
-large POST bodies — where nginx buffers to disk — it's **9× faster on p99**. Under
-burst load Pingora's tail blows out past four seconds; tachyon and nginx both absorb
-the same burst in under 15 ms. Go's GC costs under 1.5 % of throughput, with pauses
-of 16–29 µs. One person, written from scratch.
+Same 16-core Google Cloud box, same workloads, stock configs. Across plain HTTP,
+HTTPS, HTTP/2, and POST uploads: tachyon keeps up with Rust's Pingora on plain
+GETs, ties nginx on HTTPS, and on 64 KB uploads — where nginx buffers every
+request body to a temp file — tachyon's slowest request is **under 4 ms vs
+nginx's 44 ms**. Zero dropped requests across every scenario. Go's GC costs
+under 1.5 % of throughput. One person, written from scratch.
 
-![Throughput vs nginx and Pingora](docs/throughput-bars.svg)
+![Requests per second across HTTP/1, HTTPS, HTTP/2, and POSTs](docs/throughput-bars.svg)
 
-![Tail latency under burst load](docs/p99-burst.svg)
+![Worst single request seen during each run](docs/p99-burst.svg)
 
-Full methodology, every scenario, and reproduction scripts: [BENCHMARK.md](BENCHMARK.md).
+HTTP/3 is in-tree — the QUIC handshake completes against third-party clients,
+but one transport parameter is still rejected, so it's not benchmarkable yet.
+Full numbers for every scenario, honest limitations, and reproduction scripts:
+[BENCHMARK.md](BENCHMARK.md).
 
 ### The binary is the API an LLM reads.
 
@@ -251,7 +254,7 @@ If you want to port it, fork it, or understand exactly what happens to a byte be
 
 ### Honest
 
-We don't pretend tachyon replaces every nginx deployment. The table at the top tells you exactly where it wins, ties, and isn't ready. The benchmarks include reproduction scripts so you can check our work.
+We don't pretend tachyon replaces every nginx deployment. [BENCHMARK.md](BENCHMARK.md) tells you exactly where it wins, ties, and isn't ready — and includes reproduction scripts so you can check our work.
 
 ---
 
