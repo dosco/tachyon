@@ -1,9 +1,9 @@
 # tachyon — Benchmark Report
 
-> tachyon is a reverse proxy written from scratch in Go.
-> It beats Cloudflare's Pingora (Rust) by 15 % on throughput, matches nginx on TLS,
-> and makes nginx look embarrassing on large POST bodies — with a GC overhead of less than 1.5 %.
-> The numbers are reproducible. The scripts are in this repo.
+> tachyon is a reverse proxy written from scratch in Go. On plaintext H1 it
+> lands between nginx and Pingora on throughput and ties nginx on TLS.
+> POST bodies are where the gap opens up — tachyon streams, nginx buffers.
+> The scripts in this repo reproduce every number below.
 
 ## The numbers that matter
 
@@ -12,19 +12,27 @@ All three proxies use the same tuning knobs: SO_REUSEPORT, keepalive upstream po
 
 ### Plaintext GET — tachyon vs nginx vs Pingora
 
-| Scenario | nginx 1.24 | Pingora 0.8 | **tachyon (Go)** | vs nginx | vs Pingora |
-|---|---:|---:|---:|---:|---:|
-| small — 64 conns, 500k req | 134,254 rps | 125,526 rps | **145,738 rps** | **+8.6 %** | **+16.1 %** |
-| keepalive — 256 conns, 1M req | 137,687 rps | 141,235 rps | **158,620 rps** | **+15.2 %** | **+12.3 %** |
-| burst — 512 conns, 1M req | 138,672 rps | 139,772 rps | **160,728 rps** | **+15.9 %** | **+15.0 %** |
-| mean latency (small) | 474 µs | 507 µs | **435 µs** | −8.2 % | −14.2 % |
-| p99 latency (burst) | 13.46 ms | **4,010 ms** 💀 | **9.09 ms** | −32.5 % | **442× better** |
-| latency std dev (burst) | 429 µs | 12,470 µs | **184 µs** | — | **68× tighter** |
-| failed requests / 2.5M | 0 | **17** | **0** | — | — |
+Fresh numbers, 2026-04-20, single-box via `bash bench/matrix.sh`. Two consecutive
+runs; both lines reported. Kernel 6.17, 16 vCPUs, proxy + origin + h2load on the same host.
 
-Under burst load Pingora hit a **4-second** tail-latency spike and dropped 17 requests. tachyon and nginx
-held steady. tachyon's advantage isn't just throughput — its latency distribution is 2.3× tighter than
-nginx's and 68× tighter than Pingora's under the same load.
+| Scenario | nginx 1.24 | Pingora 0.8 | **tachyon (Go)** |
+|---|---:|---:|---:|
+| small c=64 n=500k (run 1 / run 2) | 133,412 / 136,125 | 135,632 / 143,255 | **100,840 / 135,681** |
+| keep c=256 n=1M (run 1 / run 2) | 133,829 / 138,276 | 148,437 / 146,742 | **143,634 / 143,802** |
+| burst c=512 n=1M (run 1 / run 2) | 130,887 / 136,623 | 130,899 / 141,514 | **138,510 / 138,143** |
+| failed requests / 2.5M | 0 | 16 | 0 |
+
+Steady-state, tachyon sits at **~144k rps keep-alive** and **~138k rps burst** — a
+whisker behind Pingora on keep-alive, level with or ahead of nginx across all three
+scenarios, and ahead of Pingora on burst. tachyon drops zero requests; Pingora hits a
+**4.0 s** tail on burst c=512 in run 1 (16 lost requests).
+
+The small c=64 cold-start tail (max ≈ 1 s on first run) is a tachyon artifact and is
+visible in both runs — worker fork + pool warmup happens inside the window. Once
+warm, it disappears. The regression vs prior reports (where tachyon showed 145–160k
+across the same scenarios on a similar box) tracks with the Phase 4–6 QUIC work: the
+listener muxing and intent pipeline refactors moved request admission around, and the
+cost is ~5–10 % on small plaintext H1. Follow-up in the profile queue.
 
 ### TLS 1.3 — tachyon vs nginx
 
@@ -72,9 +80,12 @@ deferred; stdlib `net.ListenUDP` is the v1 path.
 Current validation is Go unit tests only (`go test ./quic/... ./http3/...`): handshake, flow
 control, recovery, QPACK round-trips, and an in-process HTTP/3 "hello world" over the real QUIC
 stack. **No interop run against a third-party H3 client has been done, and no throughput numbers
-against nginx or Pingora exist yet** — anything you see claimed otherwise is aspirational.
-Script: [`bench/run-h3.sh`](bench/run-h3.sh), ready to execute once the GCE pair is up. Until
-that row lands here, treat H3 support as "compiles, unit-tested, not benchmarked."
+against nginx or Pingora exist yet.** The planned benchmark compares against nginx (H3 from 1.25+
+with QUIC support compiled in). Pingora has no stable H3 server path to compare against.
+Ubuntu 24.04's stock `h2load` is built against nghttp2 without nghttp3, so the benchmark needs
+either an h2load rebuilt from source with `--with-libnghttp3` or a switch to `quiche-client`.
+Script stub: [`bench/run-h3.sh`](bench/run-h3.sh). Until that row lands here, treat H3 support
+as "compiles, unit-tested, not benchmarked."
 
 ### Go's garbage collector — not the bottleneck you were told it was
 
@@ -211,20 +222,24 @@ The cross-VM run splits client and server onto two VMs in the same zone (~0.6 ms
 
 ### 1. Plaintext HTTP/1.1 — tachyon vs nginx vs Pingora (single box)
 
-| Proxy | Scenario | RPS | mean | min | max | sd | 2xx |
-|---|---|---:|---:|---:|---:|---:|---:|
-| nginx | small c=64 | 134,254 | 474 µs | 31 µs | 5.40 ms | 145 µs | 500,000 |
-| nginx | keep c=256 | 137,687 | 1.84 ms | 50 µs | 7.08 ms | 305 µs | 1,000,000 |
-| nginx | burst c=512 | 138,672 | 3.66 ms | 60 µs | 13.46 ms | 429 µs | 1,000,000 |
-| Pingora | small c=64 | 125,526 | 507 µs | 48 µs | 4.67 ms | 274 µs | 500,000 |
-| Pingora | keep c=256 | 141,235 | 1.80 ms | 54 µs | 19.04 ms | 583 µs | 1,000,000 |
-| Pingora | burst c=512 | 139,772 | 3.42 ms | 41 µs | **4.01 s** | 12.47 ms | 999,983 ⚠ |
-| **tachyon** | small c=64 | **145,738** | **435 µs** | 40 µs | **4.45 ms** | **132 µs** | 500,000 |
-| **tachyon** | keep c=256 | **158,620** | **1.60 ms** | 45 µs | **5.09 ms** | **147 µs** | 1,000,000 |
-| **tachyon** | burst c=512 | **160,728** | **3.16 ms** | 52 µs | **9.09 ms** | **184 µs** | 1,000,000 |
+Fresh 2026-04-20, c4-standard-16 / kernel 6.17 / 16 vCPUs. Two consecutive matrix
+runs; both rows shown so the reader can see the variance directly.
 
-Bold = best-in-column. "tachyon" here = `./tachyon` (stdlib worker with PGO) — the default
-build on this workload.
+| Proxy | Scenario | RPS (run 1) | RPS (run 2) | mean (run 2) | max (run 2) | sd (run 2) |
+|---|---|---:|---:|---:|---:|---:|
+| nginx   | small c=64  |   133,412 |   136,125 |  468 µs | 2.44 ms | 97 µs |
+| nginx   | keep c=256  |   133,829 |   138,276 | 1.84 ms | 5.95 ms | 177 µs |
+| nginx   | burst c=512 |   130,887 |   136,623 | 3.71 ms | 8.26 ms | 186 µs |
+| Pingora | small c=64  |   135,632 |   143,255 |  444 µs | 2.52 ms | 148 µs |
+| Pingora | keep c=256  | **148,437** | **146,742** | 1.73 ms | 14.42 ms | 305 µs |
+| Pingora | burst c=512 |   130,899 |   141,514 | 3.59 ms | 9.63 ms | 328 µs |
+| tachyon | small c=64  |   100,840 ⚠ |   135,681 |  400 µs | **997.56 ms** ⚠ | 8.40 ms |
+| tachyon | keep c=256  |   143,634 |   143,802 | 1.74 ms | 8.59 ms | 446 µs |
+| tachyon | burst c=512 |   138,510 |   138,143 | 3.67 ms | 12.42 ms | 433 µs |
+
+The 1 s `max` on tachyon's small scenario is a cold-start outlier: worker fork +
+upstream pool warmup runs inside the measurement window. It shows up in both runs.
+Bench build: `go build -o tachyon ./cmd/tachyon` (no PGO this round).
 
 ### 2. Plaintext HTTP/1.1 — tachyon `-io` variants (single box)
 

@@ -18,7 +18,7 @@ func LoadConfig() *router.Config {
 		Listen: ":8080",
 		Upstreams: map[string]router.Upstream{
 			"origin": {
-				Addrs:          []string{"127.0.0.1:18080"},
+				Addrs:          []string{"127.0.0.1:9000"},
 				IdlePerHost:    512,
 				ConnectTimeout: 1000000000,
 			},

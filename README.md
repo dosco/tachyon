@@ -1,21 +1,27 @@
 # tachyon
 
-**A reverse proxy that's faster than Nginx and Cloudflare Pingora — and LLM-driven through a compiler, not YAML.**
+**A reverse proxy that competes with nginx and Pingora — and is LLM-driven through a compiler, not YAML.**
 
 *117 ns hot path. Zero allocations per request. Policies compile to Go source, not bytecode. The binary is the API.*
 
 ---
 
-### Faster than Rust, in Go.
+### Competitive with Rust, in Go.
 
-On a 16-core GCE box, same workloads, stock configs: tachyon moves **15 % more requests per second than Pingora** — the proxy Cloudflare replaced nginx with — and holds a 9 ms p99 in the burst where Pingora's tail blows out past four seconds. Go's GC costs under 1.5 % of throughput, with pauses of 16–29 microseconds. One person, written from scratch.
+On a 16-core GCE box, same workloads, stock configs: tachyon lands within a few
+percent of Cloudflare's Pingora on plaintext H1 and ahead of nginx, ties nginx on TLS
+throughput, and on large POST bodies — where nginx buffers to disk — it's **9×
+faster on p99**. Go's GC costs under 1.5 % of throughput, with pauses of 16–29 µs.
+One person, written from scratch.
 
 | Workload | nginx | Pingora (Rust) | **tachyon (Go)** |
 |---|---:|---:|---:|
-| Plaintext GET — 512 conns, burst | 138,672 rps | 139,772 rps | **160,728 rps (+15 %)** |
-| Plaintext GET — p99 under burst | 13.46 ms | 4,010 ms 💀 | **9.09 ms** |
+| Plaintext GET — keep, 256 conns | 138,276 rps | 146,742 rps | **143,802 rps** |
+| Plaintext GET — burst, 512 conns | 136,623 rps | 141,514 rps | **138,143 rps** |
 | TLS 1.3 — p99, 256 conns | 3.13 ms | — | **2.87 ms** |
 | POST 64 KB body — p99 | 16.02 ms 💀 | 1.88 ms | **1.78 ms** |
+
+Fresh H1 numbers from 2026-04-20; TLS and POST rows are from the prior cross-VM run.
 
 ![Throughput vs nginx and Pingora](docs/throughput-bars.svg)
 
