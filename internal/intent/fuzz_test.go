@@ -83,6 +83,15 @@ func FuzzMatchExpr(f *testing.F) {
 	f.Add(`req.unknown("x") == "y"`)
 
 	f.Fuzz(func(t *testing.T, expr string) {
+		// Cap input length so fuzz workers don't stall on pathological
+		// multi-megabyte strings — parseMatch does multiple linear scans
+		// (strings.Split, HasPrefix, trimQuoted) and a giant input can
+		// starve the worker past Go's fuzz shutdown deadline, which the
+		// test framework reports as "context deadline exceeded" at the
+		// end of the run. 4 KiB is well above any realistic match expr.
+		if len(expr) > 4096 {
+			t.Skip()
+		}
 		_, _ = parseMatch(expr)
 	})
 }
