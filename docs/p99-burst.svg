@@ -3,14 +3,11 @@
   <rect width="920" height="280" fill="#ffffff" rx="10"/>
 
   <text x="30" y="34" font-size="14" fill="#212529" font-weight="700" letter-spacing="0.2">
-    p99 latency  ·  burst load, 512 conns
+    Tail latency  ·  burst load, 512 conns, plaintext GET
   </text>
   <text x="30" y="52" font-size="10.5" fill="#868e96">
-    milliseconds  ·  lower is better  ·  tail behavior under stress
+    max request latency, milliseconds  ·  lower is better  ·  tail behavior under stress
   </text>
-
-  <!-- Log-ish scale: tachyon 9.09, nginx 13.46, Pingora 4010 -->
-  <!-- We'll use a broken-axis trick. Linear 0–20ms spans x=150→x=770, then break, then Pingora off-chart -->
 
   <line x1="150" y1="90" x2="150" y2="220" stroke="#dee2e6" stroke-width="1"/>
   <line x1="274" y1="90" x2="274" y2="220" stroke="#f1f3f5" stroke-width="1"/>
@@ -32,29 +29,26 @@
 
   <!-- Scale 0..20ms over x=150..x=770 (620px / 20ms = 31 px per ms) -->
 
-  <!-- tachyon: 9.09 ms → x=150 + 9.09*31 = 150+282=432 -->
-  <text x="140" y="112" text-anchor="end" font-size="12" fill="#5f3dc4" font-weight="700">tachyon</text>
-  <rect x="150" y="98" width="282" height="26" rx="3" fill="#9775fa"/>
-  <text x="441" y="116" font-size="12" fill="#5f3dc4" font-weight="700">9.09 ms</text>
+  <!-- nginx: 8.26 ms → 150 + 256 = 406 -->
+  <text x="140" y="112" text-anchor="end" font-size="12" fill="#495057" font-weight="500">nginx</text>
+  <rect x="150" y="98" width="256" height="22" rx="3" fill="#ced4da"/>
+  <text x="415" y="114" font-size="11" fill="#495057">8.26 ms</text>
 
-  <!-- nginx: 13.46 ms → 150 + 417 = 567 -->
-  <text x="140" y="152" text-anchor="end" font-size="12" fill="#495057" font-weight="500">nginx</text>
-  <rect x="150" y="138" width="417" height="22" rx="3" fill="#ced4da"/>
-  <text x="576" y="154" font-size="11" fill="#495057">13.46 ms</text>
+  <!-- tachyon: 12.42 ms → 150 + 385 = 535 -->
+  <text x="140" y="152" text-anchor="end" font-size="12" fill="#5f3dc4" font-weight="700">tachyon</text>
+  <rect x="150" y="138" width="385" height="26" rx="3" fill="#9775fa"/>
+  <text x="544" y="156" font-size="12" fill="#5f3dc4" font-weight="700">12.42 ms</text>
 
   <!-- Pingora: 4,010 ms — off-chart red bar with jagged break -->
   <text x="140" y="192" text-anchor="end" font-size="12" fill="#c92a2a" font-weight="600">Pingora</text>
   <rect x="150" y="178" width="625" height="22" rx="3" fill="#ffa8a8"/>
-  <!-- Jagged edge -->
   <polygon points="775,178 788,182 775,186 788,190 775,194 788,198 775,200" fill="#ffa8a8" stroke="none"/>
 
-  <!-- Off-chart label -->
   <rect x="810" y="172" width="92" height="34" rx="6" fill="#fff5f5" stroke="#ff6b6b" stroke-width="1.5"/>
   <text x="856" y="188" text-anchor="middle" font-size="12" fill="#c92a2a" font-weight="700">💀 4,010 ms</text>
   <text x="856" y="201" text-anchor="middle" font-size="9" fill="#e03131">off chart</text>
 
-  <!-- Footnote -->
   <text x="30" y="264" font-size="10" fill="#868e96">
-    Pingora's tail latency spikes to four seconds under the same burst that nginx and tachyon absorb in under 15 ms.
+    Under the same burst, Pingora's worst request took 4 seconds. nginx and tachyon both absorbed the burst under 15 ms.
   </text>
 </svg>

@@ -1,33 +1,25 @@
 # tachyon
 
-**A reverse proxy that competes with nginx and Pingora — and is LLM-driven through a compiler, not YAML.**
+**A reverse proxy written from scratch in Go that keeps up with nginx and Cloudflare's Pingora — and is LLM-driven through a compiler, not YAML.**
 
 *117 ns hot path. Zero allocations per request. Policies compile to Go source, not bytecode. The binary is the API.*
 
 ---
 
-### Competitive with Rust, in Go.
+### Rust-class throughput, in Go.
 
-On a 16-core GCE box, same workloads, stock configs: tachyon lands within a few
-percent of Cloudflare's Pingora on plaintext H1 and ahead of nginx, ties nginx on TLS
-throughput, and on large POST bodies — where nginx buffers to disk — it's **9×
-faster on p99**. Go's GC costs under 1.5 % of throughput, with pauses of 16–29 µs.
-One person, written from scratch.
-
-| Workload | nginx | Pingora (Rust) | **tachyon (Go)** |
-|---|---:|---:|---:|
-| Plaintext GET — keep, 256 conns | 138,276 rps | 146,742 rps | **143,802 rps** |
-| Plaintext GET — burst, 512 conns | 136,623 rps | 141,514 rps | **138,143 rps** |
-| TLS 1.3 — p99, 256 conns | 3.13 ms | — | **2.87 ms** |
-| POST 64 KB body — p99 | 16.02 ms 💀 | 1.88 ms | **1.78 ms** |
-
-Fresh H1 numbers from 2026-04-20; TLS and POST rows are from the prior cross-VM run.
+On a 16-core GCE box, same workloads, stock configs: tachyon sits a few percent
+behind Rust's Pingora on plaintext H1 and ahead of nginx, ties nginx on TLS, and on
+large POST bodies — where nginx buffers to disk — it's **9× faster on p99**. Under
+burst load Pingora's tail blows out past four seconds; tachyon and nginx both absorb
+the same burst in under 15 ms. Go's GC costs under 1.5 % of throughput, with pauses
+of 16–29 µs. One person, written from scratch.
 
 ![Throughput vs nginx and Pingora](docs/throughput-bars.svg)
 
-![p99 latency under burst load](docs/p99-burst.svg)
+![Tail latency under burst load](docs/p99-burst.svg)
 
-Full methodology and reproduction scripts: [BENCHMARK.md](BENCHMARK.md).
+Full methodology, every scenario, and reproduction scripts: [BENCHMARK.md](BENCHMARK.md).
 
 ### The binary is the API an LLM reads.
 
