@@ -1,0 +1,63 @@
+intent_version "0.2"
+
+# tachyon topology — listener, upstream pools, TLS, and routes.
+# Everything in this file is compiled into the binary at `tachyon intent build`
+# time; there is no runtime config parsing.
+
+listener {
+  addr ":8080"
+}
+
+# Uncomment to enable the TLS listener. Cert/key paths are resolved relative
+# to this file at compile time. Omit cert/key entirely to use a self-signed
+# cert generated on startup.
+#
+# tls {
+#   listen ":8443"
+#   cert   "./certs/prod.pem"
+#   key    "./certs/prod.key"
+# }
+
+# Uncomment to enable the HTTP/3 (QUIC) listener. Cert/key default to the
+# sibling tls { ... } block when omitted — H3 and TLS-over-TCP typically
+# share one cert. ALPN defaults to ["h3"].
+#
+# quic {
+#   listen ":8443"
+#   # cert "./certs/prod.pem"
+#   # key  "./certs/prod.key"
+#   # alpn "h3"
+# }
+
+# ---------------------------------------------------------------------------
+# Upstream pools.
+# ---------------------------------------------------------------------------
+
+pool origin {
+  addrs "127.0.0.1:18080"
+  idle_per_host 512
+  connect_timeout "1s"
+}
+
+# ---------------------------------------------------------------------------
+# Routes. Order matters: first matching host+longest-path-prefix wins.
+# ---------------------------------------------------------------------------
+
+route example_workflow {
+  host "example.local"
+  path "/"
+  upstream "origin"
+  apply "example_block_admin_debug", "example_proxy_headers"
+}
+
+route sample_com {
+  host "example.com"
+  path "/"
+  upstream "origin"
+}
+
+route catchall {
+  host "*"
+  path "/"
+  upstream "origin"
+}

@@ -1,6 +1,6 @@
 # build output
-tachyon
-origin
+/tachyon
+/origin
 
 # benchmark results (large, machine-specific)
 results/
@@ -20,3 +20,6 @@ cpu.out
 .vscode/
 *.swp
 .claude/
+
+# paper drafts
+papers/

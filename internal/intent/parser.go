@@ -6,152 +6,726 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	rt "tachyon/internal/intent/runtime"
+	"tachyon/internal/router"
 )
 
 var (
-	reVersion = regexp.MustCompile(`^intent_version\s+"([^"]+)"$`)
-	rePolicy  = regexp.MustCompile(`^policy\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{$`)
-	reCase    = regexp.MustCompile(`^case\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{$`)
+	reVersion  = regexp.MustCompile(`^intent_version\s+"([^"]+)"$`)
+	rePolicy   = regexp.MustCompile(`^policy\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{$`)
+	reCase     = regexp.MustCompile(`^case\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{$`)
+	rePool     = regexp.MustCompile(`^pool\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{$`)
+	reRoute    = regexp.MustCompile(`^route\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{$`)
+	reListener = regexp.MustCompile(`^listener\s*\{$`)
+	reTLS      = regexp.MustCompile(`^tls\s*\{$`)
+	reQUIC     = regexp.MustCompile(`^quic\s*\{$`)
+	reRouteAnon = regexp.MustCompile(`^route\s*\{$`)
 )
 
-func parseSource(path, src string) ([]Policy, string, error) {
-	var (
-		policies  []Policy
-		version   string
-		cur       *Policy
-		curCase   *PolicyCase
-		curBudget *PolicyBudget
-		section   string
-		depth     int
-	)
-	sc := bufio.NewScanner(strings.NewReader(src))
-	for lineNo := 1; sc.Scan(); lineNo++ {
-		line := strings.TrimSpace(stripComment(sc.Text()))
+// parsedFile is the raw output of a single .intent file parse.
+type parsedFile struct {
+	Version   string
+	Policies  []Policy
+	Pools     []Pool
+	Routes    []Route
+	Listener  *Listener
+	TLS       *TLSConfig
+	QUIC      *QUICConfig
+	TopoCases []TopoCase
+}
+
+// parseSource parses a single .intent file. The parser is line-oriented.
+// Top-level blocks supported: policy, pool, route, listener, tls, case.
+func parseSource(path, src string) (*parsedFile, error) {
+	out := &parsedFile{}
+	lines := splitLines(src)
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(stripComment(lines[i]))
 		if line == "" {
 			continue
 		}
-		if cur == nil {
-			if m := reVersion.FindStringSubmatch(line); m != nil {
-				version = m[1]
-				continue
-			}
-			if m := rePolicy.FindStringSubmatch(line); m != nil {
-				p := Policy{Name: m[1], Priority: 100, SourceFile: path}
-				cur = &p
-				depth = 1
-				continue
-			}
-			return nil, "", errf("E001", "%s:%d: unexpected top-level line %q", path, lineNo, line)
-		}
+		lineNo := i + 1
 
-		switch {
-		case line == "}":
-			depth--
-			if depth == 1 {
-				if section == "case" && curCase != nil {
-					cur.Cases = append(cur.Cases, *curCase)
-					curCase = nil
-				}
-				if section == "budget" && curBudget != nil {
-					cur.Budget = *curBudget
-					curBudget = nil
-				}
-				section = ""
+		if m := reVersion.FindStringSubmatch(line); m != nil {
+			out.Version = m[1]
+			continue
+		}
+		if m := rePolicy.FindStringSubmatch(line); m != nil {
+			body, end, err := collectBlock(lines, i)
+			if err != nil {
+				return nil, errf("E002", "%s:%d: %v", path, lineNo, err)
 			}
+			p, err := parsePolicy(path, lineNo, m[1], body)
+			if err != nil {
+				return nil, err
+			}
+			out.Policies = append(out.Policies, p)
+			i = end
+			continue
+		}
+		if m := rePool.FindStringSubmatch(line); m != nil {
+			body, end, err := collectBlock(lines, i)
+			if err != nil {
+				return nil, errf("E002", "%s:%d: %v", path, lineNo, err)
+			}
+			pool, err := parsePool(path, lineNo, m[1], body)
+			if err != nil {
+				return nil, err
+			}
+			out.Pools = append(out.Pools, pool)
+			i = end
+			continue
+		}
+		if m := reRoute.FindStringSubmatch(line); m != nil {
+			body, end, err := collectBlock(lines, i)
+			if err != nil {
+				return nil, errf("E002", "%s:%d: %v", path, lineNo, err)
+			}
+			rr, err := parseRoute(path, lineNo, m[1], body)
+			if err != nil {
+				return nil, err
+			}
+			out.Routes = append(out.Routes, rr)
+			i = end
+			continue
+		}
+		if reRouteAnon.MatchString(line) {
+			return nil, errf("E305", "%s:%d: route block requires a name", path, lineNo)
+		}
+		if reListener.MatchString(line) {
+			body, end, err := collectBlock(lines, i)
+			if err != nil {
+				return nil, errf("E002", "%s:%d: %v", path, lineNo, err)
+			}
+			if out.Listener != nil {
+				return nil, errf("E322", "%s:%d: duplicate listener block", path, lineNo)
+			}
+			l, err := parseListener(path, lineNo, body)
+			if err != nil {
+				return nil, err
+			}
+			out.Listener = &l
+			i = end
+			continue
+		}
+		if reTLS.MatchString(line) {
+			body, end, err := collectBlock(lines, i)
+			if err != nil {
+				return nil, errf("E002", "%s:%d: %v", path, lineNo, err)
+			}
+			if out.TLS != nil {
+				return nil, errf("E323", "%s:%d: duplicate tls block", path, lineNo)
+			}
+			tc, err := parseTLS(path, lineNo, body)
+			if err != nil {
+				return nil, err
+			}
+			out.TLS = &tc
+			i = end
+			continue
+		}
+		if reQUIC.MatchString(line) {
+			body, end, err := collectBlock(lines, i)
+			if err != nil {
+				return nil, errf("E002", "%s:%d: %v", path, lineNo, err)
+			}
+			if out.QUIC != nil {
+				return nil, errf("E324", "%s:%d: duplicate quic block", path, lineNo)
+			}
+			qc, err := parseQUIC(path, lineNo, body)
+			if err != nil {
+				return nil, err
+			}
+			out.QUIC = &qc
+			i = end
+			continue
+		}
+		if m := reCase.FindStringSubmatch(line); m != nil {
+			body, end, err := collectBlock(lines, i)
+			if err != nil {
+				return nil, errf("E002", "%s:%d: %v", path, lineNo, err)
+			}
+			tc, err := parseTopoCase(path, lineNo, m[1], body)
+			if err != nil {
+				return nil, err
+			}
+			out.TopoCases = append(out.TopoCases, tc)
+			i = end
+			continue
+		}
+		return nil, errf("E001", "%s:%d: unexpected top-level line %q", path, lineNo, line)
+	}
+	return out, nil
+}
+
+// splitLines breaks source into lines preserving order, using a bufio scanner
+// so CRLF is handled consistently.
+func splitLines(src string) []string {
+	sc := bufio.NewScanner(strings.NewReader(src))
+	sc.Buffer(make([]byte, 0, 1024), 1024*1024)
+	var out []string
+	for sc.Scan() {
+		out = append(out, sc.Text())
+	}
+	return out
+}
+
+// collectBlock, given the index of a line ending in `{`, scans forward and
+// returns the inner body lines (between the opening brace and the matching
+// close) along with the index of the closing `}`. Supports nested blocks.
+func collectBlock(lines []string, start int) ([]string, int, error) {
+	depth := 1
+	body := []string{}
+	for i := start + 1; i < len(lines); i++ {
+		trim := strings.TrimSpace(stripComment(lines[i]))
+		if trim == "}" {
+			depth--
 			if depth == 0 {
-				policies = append(policies, *cur)
-				cur = nil
+				return body, i, nil
+			}
+		} else if strings.HasSuffix(trim, "{") {
+			depth++
+		}
+		body = append(body, lines[i])
+	}
+	return nil, 0, fmt.Errorf("unterminated block")
+}
+
+// parsePolicy parses the body of a policy block.
+func parsePolicy(path string, startLine int, name string, body []string) (Policy, error) {
+	p := Policy{Name: name, Priority: 100, SourceFile: path}
+	var curCase *PolicyCase
+	var curBudget *PolicyBudget
+	section := ""
+	sectionDepth := 0
+	for i := 0; i < len(body); i++ {
+		raw := body[i]
+		line := strings.TrimSpace(stripComment(raw))
+		if line == "" {
+			continue
+		}
+		lineNo := startLine + i + 1
+		if sectionDepth > 0 {
+			if line == "}" {
+				sectionDepth--
+				if sectionDepth == 0 {
+					if section == "case" && curCase != nil {
+						p.Cases = append(p.Cases, *curCase)
+						curCase = nil
+					}
+					if section == "budget" && curBudget != nil {
+						p.Budget = *curBudget
+						curBudget = nil
+					}
+					section = ""
+				}
+				continue
+			}
+			if strings.HasSuffix(line, "{") {
+				sectionDepth++
+				continue
+			}
+			switch section {
+			case "request", "response", "error":
+				action, primitive, err := parseAction(line)
+				if err != nil {
+					return Policy{}, errf("E020", "%s:%d: %v", path, lineNo, err)
+				}
+				p.Primitives = appendUnique(p.Primitives, primitive)
+				if primitive == string(rt.ActionAuthExternal) {
+					p.RequiresClassC = true
+				}
+				switch section {
+				case "request":
+					p.Request = append(p.Request, action)
+				case "response":
+					p.Response = append(p.Response, action)
+				case "error":
+					p.Error = append(p.Error, action)
+				}
+			case "budget":
+				if err := parseBudgetLine(curBudget, line); err != nil {
+					return Policy{}, errf("E022", "%s:%d: %v", path, lineNo, err)
+				}
+			case "case":
+				if err := parseCaseLine(curCase, line); err != nil {
+					return Policy{}, errf("E023", "%s:%d: %v", path, lineNo, err)
+				}
+			default:
+				return Policy{}, errf("E021", "%s:%d: unexpected nested line %q", path, lineNo, line)
 			}
 			continue
-		case strings.HasSuffix(line, "{"):
-			switch strings.TrimSpace(strings.TrimSuffix(line, "{")) {
+		}
+
+		// Top-level (policy body) directives.
+		if strings.HasPrefix(line, "priority ") {
+			v, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "priority ")))
+			if err != nil {
+				return Policy{}, errf("E011", "%s:%d: invalid priority", path, lineNo)
+			}
+			p.Priority = v
+			continue
+		}
+		if strings.HasPrefix(line, "match ") {
+			conds, err := parseMatch(strings.TrimSpace(strings.TrimPrefix(line, "match ")))
+			if err != nil {
+				return Policy{}, errf("E012", "%s:%d: %v", path, lineNo, err)
+			}
+			p.Match = conds
+			continue
+		}
+		if strings.HasSuffix(line, "{") {
+			head := strings.TrimSpace(strings.TrimSuffix(line, "{"))
+			switch head {
 			case "request", "response", "error":
-				section = strings.TrimSpace(strings.TrimSuffix(line, "{"))
+				section = head
+				sectionDepth = 1
+				continue
 			case "budget":
 				section = "budget"
 				curBudget = &PolicyBudget{}
-			default:
-				if m := reCase.FindStringSubmatch(line); m != nil {
-					section = "case"
-					curCase = &PolicyCase{
-						Name: m[1],
-						Request: CaseRequest{
-							Method: "GET",
-							Host:   "example.com",
-							Path:   "/",
-						},
-					}
-				}
+				sectionDepth = 1
+				continue
 			}
-			depth++
+			if m := reCase.FindStringSubmatch(line); m != nil {
+				section = "case"
+				curCase = &PolicyCase{
+					Name: m[1],
+					Request: CaseRequest{
+						Method: "GET",
+						Host:   "example.com",
+						Path:   "/",
+					},
+				}
+				sectionDepth = 1
+				continue
+			}
+		}
+		return Policy{}, errf("E013", "%s:%d: unexpected policy line %q", path, lineNo, line)
+	}
+	return p, nil
+}
+
+// parsePool parses the body of a pool block.
+func parsePool(path string, startLine int, name string, body []string) (Pool, error) {
+	pool := Pool{Name: name, SourceFile: path, Line: startLine}
+	for i := 0; i < len(body); i++ {
+		raw := body[i]
+		line := strings.TrimSpace(stripComment(raw))
+		if line == "" {
 			continue
 		}
-
-		if depth == 1 {
-			if strings.HasPrefix(line, "priority ") {
-				v, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "priority ")))
-				if err != nil {
-					return nil, "", errf("E011", "%s:%d: invalid priority", path, lineNo)
-				}
-				cur.Priority = v
-				continue
-			}
-			if strings.HasPrefix(line, "match ") {
-				conds, err := parseMatch(strings.TrimSpace(strings.TrimPrefix(line, "match ")))
-				if err != nil {
-					return nil, "", errf("E012", "%s:%d: %v", path, lineNo, err)
-				}
-				cur.Match = conds
-				continue
-			}
-			return nil, "", errf("E013", "%s:%d: unexpected policy line %q", path, lineNo, line)
-		}
-
-		switch section {
-		case "request", "response", "error":
-			action, primitive, err := parseAction(line)
+		lineNo := startLine + i + 1
+		if strings.HasSuffix(line, "{") {
+			head := strings.TrimSpace(strings.TrimSuffix(line, "{"))
+			inner, end, err := collectBlock(body, i)
 			if err != nil {
-				return nil, "", errf("E020", "%s:%d: %v", path, lineNo, err)
+				return Pool{}, errf("E002", "%s:%d: %v", path, lineNo, err)
 			}
-			cur.Primitives = appendUnique(cur.Primitives, primitive)
-			if primitive == string(rt.ActionAuthExternal) {
-				cur.RequiresClassC = true
+			switch head {
+			case "outlier_detection":
+				od, err := parseOutlierDetection(path, startLine+i+1, inner)
+				if err != nil {
+					return Pool{}, err
+				}
+				pool.OutlierDetection = od
+			case "health_check":
+				hc, err := parseHealthCheck(path, startLine+i+1, inner)
+				if err != nil {
+					return Pool{}, err
+				}
+				pool.HealthCheck = hc
+			case "retry_budget":
+				rb, err := parseRetryBudget(path, startLine+i+1, inner)
+				if err != nil {
+					return Pool{}, err
+				}
+				pool.RetryBudget = rb
+			default:
+				return Pool{}, errf("E330", "%s:%d: unknown pool sub-block %q", path, lineNo, head)
 			}
-			switch section {
-			case "request":
-				cur.Request = append(cur.Request, action)
-			case "response":
-				cur.Response = append(cur.Response, action)
-			case "error":
-				cur.Error = append(cur.Error, action)
+			i = end
+			continue
+		}
+		key, rest, ok := cutDirective(line)
+		if !ok {
+			return Pool{}, errf("E330", "%s:%d: unexpected pool line %q", path, lineNo, line)
+		}
+		args := splitArgs(rest)
+		switch key {
+		case "addrs":
+			for _, a := range args {
+				pool.Addrs = append(pool.Addrs, trimQuoted(a))
 			}
-		case "budget":
-			if curBudget == nil {
-				return nil, "", errf("E021", "%s:%d: unexpected budget line %q", path, lineNo, line)
+		case "idle_per_host":
+			v, err := strconv.Atoi(strings.TrimSpace(rest))
+			if err != nil {
+				return Pool{}, errf("E330", "%s:%d: invalid idle_per_host", path, lineNo)
 			}
-			if err := parseBudgetLine(curBudget, line); err != nil {
-				return nil, "", errf("E022", "%s:%d: %v", path, lineNo, err)
+			pool.IdlePerHost = v
+		case "connect_timeout":
+			d, err := time.ParseDuration(trimQuoted(rest))
+			if err != nil {
+				return Pool{}, errf("E307", "%s:%d: invalid duration %q", path, lineNo, rest)
 			}
-		case "case":
-			if curCase == nil {
-				return nil, "", errf("E021", "%s:%d: unexpected case line %q", path, lineNo, line)
+			pool.ConnectTimeout = d
+		case "lb_policy":
+			pool.LBPolicy = trimQuoted(rest)
+		default:
+			return Pool{}, errf("E330", "%s:%d: unknown pool field %q", path, lineNo, key)
+		}
+	}
+	return pool, nil
+}
+
+func parseOutlierDetection(path string, startLine int, body []string) (*router.OutlierDetection, error) {
+	od := &router.OutlierDetection{}
+	for i, raw := range body {
+		line := strings.TrimSpace(stripComment(raw))
+		if line == "" {
+			continue
+		}
+		lineNo := startLine + i
+		key, rest, ok := cutDirective(line)
+		if !ok {
+			return nil, errf("E330", "%s:%d: unexpected outlier_detection line %q", path, lineNo, line)
+		}
+		switch key {
+		case "consecutive_5xx":
+			v, err := strconv.Atoi(strings.TrimSpace(rest))
+			if err != nil {
+				return nil, errf("E330", "%s:%d: invalid consecutive_5xx", path, lineNo)
 			}
-			if err := parseCaseLine(curCase, line); err != nil {
-				return nil, "", errf("E023", "%s:%d: %v", path, lineNo, err)
+			od.Consecutive5xx = v
+		case "consecutive_gateway_errors":
+			v, err := strconv.Atoi(strings.TrimSpace(rest))
+			if err != nil {
+				return nil, errf("E330", "%s:%d: invalid consecutive_gateway_errors", path, lineNo)
+			}
+			od.ConsecutiveGatewayErr = v
+		case "ejection_duration":
+			d, err := time.ParseDuration(trimQuoted(rest))
+			if err != nil {
+				return nil, errf("E307", "%s:%d: invalid duration %q", path, lineNo, rest)
+			}
+			od.EjectionDuration = d
+		case "max_ejected_percent":
+			v, err := strconv.Atoi(strings.TrimSpace(rest))
+			if err != nil {
+				return nil, errf("E330", "%s:%d: invalid max_ejected_percent", path, lineNo)
+			}
+			od.MaxEjectedPercent = v
+		default:
+			return nil, errf("E330", "%s:%d: unknown outlier_detection field %q", path, lineNo, key)
+		}
+	}
+	return od, nil
+}
+
+func parseHealthCheck(path string, startLine int, body []string) (*router.HealthCheck, error) {
+	hc := &router.HealthCheck{}
+	for i, raw := range body {
+		line := strings.TrimSpace(stripComment(raw))
+		if line == "" {
+			continue
+		}
+		lineNo := startLine + i
+		key, rest, ok := cutDirective(line)
+		if !ok {
+			return nil, errf("E330", "%s:%d: unexpected health_check line %q", path, lineNo, line)
+		}
+		switch key {
+		case "interval":
+			d, err := time.ParseDuration(trimQuoted(rest))
+			if err != nil {
+				return nil, errf("E307", "%s:%d: invalid duration %q", path, lineNo, rest)
+			}
+			hc.Interval = d
+		case "path":
+			hc.Path = trimQuoted(rest)
+		case "timeout":
+			d, err := time.ParseDuration(trimQuoted(rest))
+			if err != nil {
+				return nil, errf("E307", "%s:%d: invalid duration %q", path, lineNo, rest)
+			}
+			hc.Timeout = d
+		default:
+			return nil, errf("E330", "%s:%d: unknown health_check field %q", path, lineNo, key)
+		}
+	}
+	return hc, nil
+}
+
+func parseRetryBudget(path string, startLine int, body []string) (*router.RetryBudget, error) {
+	rb := &router.RetryBudget{}
+	for i, raw := range body {
+		line := strings.TrimSpace(stripComment(raw))
+		if line == "" {
+			continue
+		}
+		lineNo := startLine + i
+		key, rest, ok := cutDirective(line)
+		if !ok {
+			return nil, errf("E330", "%s:%d: unexpected retry_budget line %q", path, lineNo, line)
+		}
+		switch key {
+		case "retry_percent":
+			v, err := strconv.Atoi(strings.TrimSpace(rest))
+			if err != nil {
+				return nil, errf("E330", "%s:%d: invalid retry_percent", path, lineNo)
+			}
+			rb.RetryPercent = v
+		case "min_tokens":
+			v, err := strconv.Atoi(strings.TrimSpace(rest))
+			if err != nil {
+				return nil, errf("E330", "%s:%d: invalid min_tokens", path, lineNo)
+			}
+			rb.MinTokens = v
+		default:
+			return nil, errf("E330", "%s:%d: unknown retry_budget field %q", path, lineNo, key)
+		}
+	}
+	return rb, nil
+}
+
+// parseRoute parses the body of a route block.
+func parseRoute(path string, startLine int, name string, body []string) (Route, error) {
+	rr := Route{Name: name, SourceFile: path, Line: startLine}
+	for i, raw := range body {
+		line := strings.TrimSpace(stripComment(raw))
+		if line == "" {
+			continue
+		}
+		lineNo := startLine + i + 1
+		key, rest, ok := cutDirective(line)
+		if !ok {
+			return Route{}, errf("E330", "%s:%d: unexpected route line %q", path, lineNo, line)
+		}
+		switch key {
+		case "host":
+			rr.Host = trimQuoted(rest)
+		case "path":
+			rr.Path = trimQuoted(rest)
+		case "upstream":
+			rr.Upstream = trimQuoted(rest)
+		case "upstreams":
+			// "pool_a" weight 95, "pool_b" weight 5
+			parts := splitArgs(rest)
+			for _, part := range parts {
+				wu, err := parseWeightedUpstream(strings.TrimSpace(part))
+				if err != nil {
+					return Route{}, errf("E330", "%s:%d: %v", path, lineNo, err)
+				}
+				rr.Upstreams = append(rr.Upstreams, wu)
+			}
+		case "apply":
+			for _, a := range splitArgs(rest) {
+				rr.Apply = append(rr.Apply, trimQuoted(a))
 			}
 		default:
-			return nil, "", errf("E021", "%s:%d: unexpected nested line %q", path, lineNo, line)
+			return Route{}, errf("E330", "%s:%d: unknown route field %q", path, lineNo, key)
 		}
 	}
-	if err := sc.Err(); err != nil {
-		return nil, "", err
+	return rr, nil
+}
+
+func parseWeightedUpstream(s string) (router.WeightedUpstream, error) {
+	// Expect: "name" weight N  (weight keyword optional; if missing, weight=1).
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return router.WeightedUpstream{}, fmt.Errorf("empty weighted upstream")
 	}
-	if cur != nil {
-		return nil, "", errf("E002", "%s: unterminated policy block", path)
+	name := trimQuoted(fields[0])
+	weight := 1
+	if len(fields) >= 3 && fields[1] == "weight" {
+		v, err := strconv.Atoi(fields[2])
+		if err != nil {
+			return router.WeightedUpstream{}, fmt.Errorf("invalid weight %q", fields[2])
+		}
+		weight = v
 	}
-	return policies, version, nil
+	return router.WeightedUpstream{Name: name, Weight: weight}, nil
+}
+
+// parseListener parses the body of a listener block.
+func parseListener(path string, startLine int, body []string) (Listener, error) {
+	l := Listener{}
+	for i, raw := range body {
+		line := strings.TrimSpace(stripComment(raw))
+		if line == "" {
+			continue
+		}
+		lineNo := startLine + i + 1
+		key, rest, ok := cutDirective(line)
+		if !ok {
+			return Listener{}, errf("E330", "%s:%d: unexpected listener line %q", path, lineNo, line)
+		}
+		switch key {
+		case "addr":
+			l.Addr = trimQuoted(rest)
+		default:
+			return Listener{}, errf("E330", "%s:%d: unknown listener field %q", path, lineNo, key)
+		}
+	}
+	return l, nil
+}
+
+// parseTLS parses the body of a tls block.
+func parseTLS(path string, startLine int, body []string) (TLSConfig, error) {
+	tc := TLSConfig{}
+	for i, raw := range body {
+		line := strings.TrimSpace(stripComment(raw))
+		if line == "" {
+			continue
+		}
+		lineNo := startLine + i + 1
+		key, rest, ok := cutDirective(line)
+		if !ok {
+			return TLSConfig{}, errf("E330", "%s:%d: unexpected tls line %q", path, lineNo, line)
+		}
+		switch key {
+		case "listen":
+			tc.Addr = trimQuoted(rest)
+		case "cert":
+			tc.Cert = trimQuoted(rest)
+		case "key":
+			tc.Key = trimQuoted(rest)
+		default:
+			return TLSConfig{}, errf("E330", "%s:%d: unknown tls field %q", path, lineNo, key)
+		}
+	}
+	return tc, nil
+}
+
+// parseQUIC parses the body of a quic block.
+func parseQUIC(path string, startLine int, body []string) (QUICConfig, error) {
+	qc := QUICConfig{}
+	for i, raw := range body {
+		line := strings.TrimSpace(stripComment(raw))
+		if line == "" {
+			continue
+		}
+		lineNo := startLine + i + 1
+		key, rest, ok := cutDirective(line)
+		if !ok {
+			return QUICConfig{}, errf("E330", "%s:%d: unexpected quic line %q", path, lineNo, line)
+		}
+		switch key {
+		case "listen":
+			qc.Addr = trimQuoted(rest)
+		case "cert":
+			qc.Cert = trimQuoted(rest)
+		case "key":
+			qc.Key = trimQuoted(rest)
+		case "alpn":
+			for _, a := range splitArgs(rest) {
+				v := trimQuoted(a)
+				if v != "" {
+					qc.ALPN = append(qc.ALPN, v)
+				}
+			}
+		default:
+			return QUICConfig{}, errf("E330", "%s:%d: unknown quic field %q", path, lineNo, key)
+		}
+	}
+	return qc, nil
+}
+
+// parseTopoCase parses the body of a top-level `case NAME { ... }` block.
+func parseTopoCase(path string, startLine int, name string, body []string) (TopoCase, error) {
+	tc := TopoCase{
+		Name:       name,
+		SourceFile: path,
+		Line:       startLine,
+		Request: CaseRequest{
+			Method: "GET",
+			Host:   "example.com",
+			Path:   "/",
+		},
+	}
+	for i, raw := range body {
+		line := strings.TrimSpace(stripComment(raw))
+		if line == "" {
+			continue
+		}
+		lineNo := startLine + i + 1
+		key, rest, ok := cutDirective(line)
+		if !ok {
+			return TopoCase{}, errf("E023", "%s:%d: unexpected case line %q", path, lineNo, line)
+		}
+		args := splitArgs(rest)
+		// Allow existing request.* style first, then topology expect.*
+		switch key {
+		case "request.method":
+			tc.Request.Method = trimQuoted(rest)
+		case "request.host":
+			tc.Request.Host = trimQuoted(rest)
+		case "request.path":
+			tc.Request.Path = trimQuoted(rest)
+		case "request.client_ip":
+			tc.Request.ClientIP = trimQuoted(rest)
+		case "request.header":
+			if len(args) != 2 {
+				return TopoCase{}, errf("E023", "%s:%d: request.header requires name and value", path, lineNo)
+			}
+			if tc.Request.Headers == nil {
+				tc.Request.Headers = map[string]string{}
+			}
+			tc.Request.Headers[strings.ToLower(trimQuoted(args[0]))] = trimQuoted(args[1])
+		case "request.query":
+			if len(args) != 2 {
+				return TopoCase{}, errf("E023", "%s:%d: request.query requires name and value", path, lineNo)
+			}
+			if tc.Request.Query == nil {
+				tc.Request.Query = map[string]string{}
+			}
+			tc.Request.Query[trimQuoted(args[0])] = trimQuoted(args[1])
+		case "request.cookie":
+			if len(args) != 2 {
+				return TopoCase{}, errf("E023", "%s:%d: request.cookie requires name and value", path, lineNo)
+			}
+			if tc.Request.Cookies == nil {
+				tc.Request.Cookies = map[string]string{}
+			}
+			tc.Request.Cookies[trimQuoted(args[0])] = trimQuoted(args[1])
+		case "expect.route":
+			tc.Expect.Route = trimQuoted(rest)
+		case "expect.upstream":
+			tc.Expect.Upstream = trimQuoted(rest)
+		case "expect.applied":
+			for _, a := range args {
+				tc.Expect.Applied = append(tc.Expect.Applied, trimQuoted(a))
+			}
+		case "expect.status":
+			v, err := strconv.Atoi(strings.TrimSpace(rest))
+			if err != nil {
+				return TopoCase{}, errf("E023", "%s:%d: invalid expect.status", path, lineNo)
+			}
+			tc.Expect.Status = &v
+		default:
+			return TopoCase{}, errf("E023", "%s:%d: unsupported case directive %q", path, lineNo, key)
+		}
+	}
+	return tc, nil
+}
+
+// cutDirective splits a line like `key rest...` returning key and the rest.
+// Returns ok=false on lines that don't look like directives (no space and
+// no value after the key).
+func cutDirective(line string) (string, string, bool) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "", "", false
+	}
+	idx := strings.IndexAny(line, " \t")
+	if idx < 0 {
+		// Bare key. Treat as valid for directives like `deny` with no args:
+		// not applicable to topology lines — return ok=false.
+		return line, "", true
+	}
+	return line[:idx], strings.TrimSpace(line[idx:]), true
 }
 
 func parseCaseLine(pc *PolicyCase, line string) error {

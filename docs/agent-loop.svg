@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 280" width="960" height="280"
+     font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="arrF" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <path d="M0,0 L0,7 L10,3.5 z" fill="#5f3dc4"/>
+    </marker>
+    <marker id="arrG" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <path d="M0,0 L0,7 L10,3.5 z" fill="#2f9e44"/>
+    </marker>
+    <marker id="arrR" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <path d="M0,0 L0,7 L10,3.5 z" fill="#e03131"/>
+    </marker>
+  </defs>
+
+  <rect width="960" height="280" fill="#ffffff" rx="10"/>
+
+  <text x="30" y="30" font-size="14" fill="#212529" font-weight="700" letter-spacing="0.2">
+    The binary is the API  ·  every step of the loop is a CLI verb with stable output
+  </text>
+
+  <!-- Agent (left) -->
+  <rect x="30" y="100" width="130" height="70" rx="10" fill="#fff9db" stroke="#fcc419" stroke-width="1.5"/>
+  <text x="95" y="130" text-anchor="middle" font-size="13" fill="#e67700" font-weight="700">agent</text>
+  <text x="95" y="150" text-anchor="middle" font-size="10" fill="#f08c00">LLM or human</text>
+
+  <!-- Arrow forward -->
+  <line x1="162" y1="135" x2="198" y2="135" stroke="#5f3dc4" stroke-width="1.8" marker-end="url(#arrF)"/>
+
+  <!-- .intent -->
+  <rect x="200" y="100" width="150" height="70" rx="10" fill="#ffffff" stroke="#9775fa" stroke-width="1.5"/>
+  <text x="275" y="128" text-anchor="middle" font-size="13" fill="#5f3dc4" font-weight="700">intent/*.intent</text>
+  <text x="275" y="148" text-anchor="middle" font-size="10" fill="#7950f2">policy · route · pool · tls</text>
+
+  <line x1="352" y1="135" x2="388" y2="135" stroke="#5f3dc4" stroke-width="1.8" marker-end="url(#arrF)"/>
+
+  <!-- tachyon intent build -->
+  <rect x="390" y="100" width="180" height="70" rx="10" fill="#f3f0ff" stroke="#7950f2" stroke-width="1.5"/>
+  <text x="480" y="125" text-anchor="middle" font-size="13" fill="#5f3dc4" font-weight="700">tachyon intent build</text>
+  <text x="480" y="143" text-anchor="middle" font-size="10" fill="#7950f2">parse · sema · codegen</text>
+  <text x="480" y="157" text-anchor="middle" font-size="10" fill="#7950f2">→ plain Go source</text>
+
+  <line x1="572" y1="135" x2="608" y2="135" stroke="#5f3dc4" stroke-width="1.8" marker-end="url(#arrF)"/>
+
+  <!-- go test + bench -->
+  <rect x="610" y="100" width="160" height="70" rx="10" fill="#ebfbee" stroke="#69db7c" stroke-width="1.5"/>
+  <text x="690" y="125" text-anchor="middle" font-size="13" fill="#2f9e44" font-weight="700">go test · go bench</text>
+  <text x="690" y="143" text-anchor="middle" font-size="10" fill="#40c057">cases pass · allocs ≤ budget</text>
+  <text x="690" y="157" text-anchor="middle" font-size="10" fill="#40c057">PGO profile captured</text>
+
+  <line x1="772" y1="135" x2="808" y2="135" stroke="#2f9e44" stroke-width="1.8" marker-end="url(#arrG)"/>
+
+  <!-- binary -->
+  <rect x="810" y="100" width="130" height="70" rx="10" fill="#ebfbee" stroke="#69db7c" stroke-width="1.5"/>
+  <text x="875" y="130" text-anchor="middle" font-size="13" fill="#2f9e44" font-weight="700">tachyon</text>
+  <text x="875" y="150" text-anchor="middle" font-size="10" fill="#40c057">PGO-rebuilt binary</text>
+
+  <!-- Feedback arc (failure -> back to agent) -->
+  <path d="M 480 170 Q 480 240 95 240 Q 30 240 30 180" fill="none" stroke="#e03131" stroke-width="1.6" stroke-dasharray="6,4" marker-end="url(#arrR)"/>
+  <rect x="330" y="225" width="300" height="30" rx="6" fill="#fff5f5" stroke="#fa5252" stroke-width="1"/>
+  <text x="480" y="245" text-anchor="middle" font-size="11" fill="#c92a2a" font-weight="600" font-family="'SF Mono',Menlo,Consolas,monospace">
+    intent_error code=E200 message="..."
+  </text>
+
+  <!-- Stable codes tag -->
+  <text x="30" y="75" font-size="10.5" fill="#868e96">
+    Discover: <tspan fill="#495057" font-weight="600">intent grammar · primitives · errors · examples · scaffold</tspan>
+    ·  Review: <tspan fill="#495057" font-weight="600">intent diff · intent explain · traffic replay</tspan>
+  </text>
+</svg>

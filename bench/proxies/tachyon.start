@@ -5,7 +5,7 @@ cd ~/tachyon
 pkill -f '^./tachyon' 2>/dev/null || true
 sleep 0.3
 WORKERS=$(nproc)
-./tachyon -config config.yaml -workers "$WORKERS" > /tmp/tachyon-bench.log 2>&1 &
+./tachyon -config intent/ -workers "$WORKERS" > /tmp/tachyon-bench.log 2>&1 &
 # Wait until the port is open.
 for _ in $(seq 1 30); do
   ss -tlnp 2>/dev/null | grep -q ':8080' && exit 0

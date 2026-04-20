@@ -6,7 +6,7 @@ files in this repo.
 The example uses:
 
 - [intent/example_workflow.intent](/Users/vr/src/tachyon/intent/example_workflow.intent)
-- [config.yaml](/Users/vr/src/tachyon/examples/end-to-end/config.yaml)
+- [intent/config.intent](/Users/vr/src/tachyon/intent/config.intent)
 - [origin.go](/Users/vr/src/tachyon/examples/end-to-end/origin.go)
 
 What it demonstrates:
@@ -79,10 +79,10 @@ go run ./examples/end-to-end/origin.go
 Start Tachyon in a second terminal:
 
 ```bash
-./tachyon serve -config examples/end-to-end/config.yaml
+./tachyon serve -config intent/
 ```
 
-The example config is [config.yaml](/Users/vr/src/tachyon/examples/end-to-end/config.yaml). It attaches these two policies to the route:
+The topology is defined in [intent/config.intent](/Users/vr/src/tachyon/intent/config.intent), which is compiled into the binary alongside the policies. It attaches these two policies to the `example_workflow` route:
 
 - `example_proxy_headers`
 - `example_block_admin_debug`
@@ -122,15 +122,15 @@ If you want to see the traffic tooling end to end, run record mode
 instead of `serve`:
 
 ```bash
-./tachyon traffic record --config examples/end-to-end/config.yaml --out .tachyon/replays/example.ndjson.gz
+./tachyon traffic record --config intent/ --out .tachyon/replays/example.ndjson.gz
 ```
 
 Generate a little traffic with the same `curl` commands above, then stop
 the process and replay the captured envelopes:
 
 ```bash
-./tachyon traffic replay --config examples/end-to-end/config.yaml .tachyon/replays/example.ndjson.gz
-./tachyon traffic explain --config examples/end-to-end/config.yaml --artifact .tachyon/replays/example.ndjson.gz --id 1
+./tachyon traffic replay --config intent/ .tachyon/replays/example.ndjson.gz
+./tachyon traffic explain --config intent/ --artifact .tachyon/replays/example.ndjson.gz --id 1
 ```
 
 That lets you inspect:

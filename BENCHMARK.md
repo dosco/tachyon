@@ -62,6 +62,18 @@ proxies with stock configs. If you have tuned nginx with that directive, your nu
 tachyon's. Most deployments don't, because the default exists for a reason (protects upstreams from slow
 clients). tachyon handles this transparently — it streams while still protecting the upstream.
 
+### HTTP/3 — new in this release, numbers pending
+
+tachyon now terminates HTTP/3 on a custom QUIC stack — no external crate, written alongside the
+rest of the proxy. The stack implements RFC 9000/9001/9002 (transport, TLS, recovery), RFC 9114
+(HTTP/3 framing), and RFC 9204 (QPACK) on top of Go's stdlib UDP socket. io_uring UDP is
+deferred; stdlib `net.ListenUDP` is the v1 path.
+
+Early loopback tests work end-to-end with `curl --http3` and `h2load`; a comparable table against
+an H3-capable nginx / quic-go control is still being produced. Script: [`bench/run-h3.sh`](bench/run-h3.sh).
+When numbers land they'll slot into this document alongside the TLS table above — the expectation
+is "competitive throughput, latency dominated by the UDP stack rather than the proxy."
+
 ### Go's garbage collector — not the bottleneck you were told it was
 
 Turning off GC entirely (`GOGC=off`) moves throughput by **less than 1.5 %** — inside measurement noise.
@@ -338,18 +350,22 @@ On the **server** VM (`tachyon-dev`):
 ```sh
 ./origin -addr 127.0.0.1:9000 -size 1024  &
 ./origin -addr 127.0.0.1:9002 -size 65536 &
-cat > /tmp/rw.yaml <<EOF
-listen: "0.0.0.0:8080"
-upstreams:
-  small: { addrs: ["127.0.0.1:9000"], idle_per_host: 512 }
-  big:   { addrs: ["127.0.0.1:9002"], idle_per_host: 512 }
-routes:
-  - { host: "*", path: "/big", upstream: "big" }
-  - { host: "*", path: "/",    upstream: "small" }
+mkdir -p /tmp/rw-intent
+cat > /tmp/rw-intent/config.intent <<EOF
+intent_version "0.1"
+
+listener { addr "0.0.0.0:8080" }
+tls { addr "0.0.0.0:8443" cert "bench.crt" key "bench.key" }
+
+pool small { upstream "127.0.0.1:9000" idle_per_host 512 }
+pool big   { upstream "127.0.0.1:9002" idle_per_host 512 }
+
+route big_route { host "*" path "/big" upstream "big" }
+route catchall  { host "*" path "/"    upstream "small" }
 EOF
-./tachyon -config /tmp/rw.yaml -io std -tls-listen 0.0.0.0:8443 -workers $(nproc) &
+./tachyon -config /tmp/rw-intent/ -io std -workers $(nproc) &
 # OR for io_uring (plaintext only):
-# ./tachyon -config /tmp/rw.yaml -io uring -workers $(nproc) &
+# ./tachyon -config /tmp/rw-intent/ -io uring -workers $(nproc) &
 ```
 
 On the **client** VM:
@@ -399,7 +415,7 @@ Results are written to `results/<date>/<proxy>/post-{small,large}-*.txt`.
 ### 7. TLS 1.3 + HTTP/2 (kernel TLS)
 
 ```sh
-./tachyon -config config.yaml -workers $(nproc) -tls-listen :8443 &
+./tachyon -config intent/ -workers $(nproc) &
 h2load -n 500000 -c 64 https://127.0.0.1:8443/
 grep -E 'TlsTxSw|TlsRxSw|TlsDecryptError' /proc/net/tls_stat
 ```

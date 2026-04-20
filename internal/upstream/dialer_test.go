@@ -37,8 +37,8 @@ func TestDialerRoundRobins(t *testing.T) {
 		_ = c.Close()
 	}
 	// Each address should see exactly 10 hits.
-	for i, h := range hits {
-		if got := h.Load(); got != 10 {
+	for i := range hits {
+		if got := hits[i].Load(); got != 10 {
 			t.Errorf("addr[%d] hits: got %d want 10", i, got)
 		}
 	}

@@ -7,9 +7,8 @@ pkill -f '^./tachyon' 2>/dev/null || true
 sleep 0.3
 WORKERS=$(nproc)
 ./tachyon \
-  -config config.yaml \
+  -config intent/ \
   -workers "$WORKERS" \
-  -tls-listen :8443 \
   > /tmp/tachyon-tls-bench.log 2>&1 &
 # Wait for both ports.
 for _ in $(seq 1 60); do

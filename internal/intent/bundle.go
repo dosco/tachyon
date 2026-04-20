@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	rt "tachyon/internal/intent/runtime"
+	"tachyon/internal/router"
 )
 
 type Policy struct {
@@ -54,9 +56,80 @@ type PolicyBudget struct {
 	ResponseAllocs *float64
 }
 
+// Pool is an upstream pool declared via `pool NAME { ... }`.
+type Pool struct {
+	Name             string
+	Addrs            []string
+	IdlePerHost      int
+	ConnectTimeout   time.Duration
+	LBPolicy         string
+	OutlierDetection *router.OutlierDetection
+	HealthCheck      *router.HealthCheck
+	RetryBudget      *router.RetryBudget
+	SourceFile       string
+	Line             int
+}
+
+// Route is a routing rule declared via `route NAME { ... }`.
+type Route struct {
+	Name       string
+	Host       string
+	Path       string
+	Upstream   string
+	Upstreams  []router.WeightedUpstream
+	Apply      []string
+	SourceFile string
+	Line       int
+}
+
+// Listener is the plaintext listener block.
+type Listener struct {
+	Addr string
+}
+
+// TLSConfig is the optional `tls { ... }` block. Cert/Key are absolute after sema.
+type TLSConfig struct {
+	Addr string
+	Cert string
+	Key  string
+}
+
+// QUICConfig is the optional `quic { ... }` block. Cert/Key are absolute
+// after sema; when Cert/Key are empty, the runtime falls back to the
+// sibling TLSConfig. ALPN defaults to []string{"h3"} when empty.
+type QUICConfig struct {
+	Addr string
+	Cert string
+	Key  string
+	ALPN []string
+}
+
+// TopoCase is a top-level routing assertion, declared via `case NAME { ... }`
+// at file scope (not nested inside a policy).
+type TopoCase struct {
+	Name       string
+	Request    CaseRequest
+	Expect     TopoExpect
+	SourceFile string
+	Line       int
+}
+
+type TopoExpect struct {
+	Route    string
+	Upstream string
+	Applied  []string
+	Status   *int
+}
+
 type Bundle struct {
-	Version  string
-	Policies []Policy
+	Version   string
+	Policies  []Policy
+	Pools     []Pool
+	Routes    []Route
+	Listener  Listener
+	TLS       *TLSConfig
+	QUIC      *QUICConfig
+	TopoCases []TopoCase
 }
 
 func Discover(paths []string) ([]string, error) {
@@ -79,29 +152,80 @@ func ParseFiles(paths []string) (Bundle, error) {
 		return Bundle{}, err
 	}
 	b := Bundle{Version: "0.1"}
-	seen := map[string]string{}
+	seenPolicy := map[string]string{}
+	seenPool := map[string]string{}
+	seenRoute := map[string]string{}
+	seenTopoCase := map[string]string{}
 	for _, path := range files {
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return Bundle{}, err
 		}
-		policies, version, err := parseSource(path, string(raw))
+		file, err := parseSource(path, string(raw))
 		if err != nil {
 			return Bundle{}, err
 		}
-		if version != "" {
-			b.Version = version
+		if file.Version != "" {
+			b.Version = file.Version
 		}
-		for _, p := range policies {
-			if prev, ok := seen[p.Name]; ok {
+		for _, p := range file.Policies {
+			if prev, ok := seenPolicy[p.Name]; ok {
 				return Bundle{}, errf("E102", "duplicate policy %q in %s and %s", p.Name, prev, p.SourceFile)
 			}
-			seen[p.Name] = p.SourceFile
+			seenPolicy[p.Name] = p.SourceFile
 			b.Policies = append(b.Policies, p)
+		}
+		for _, pool := range file.Pools {
+			if prev, ok := seenPool[pool.Name]; ok {
+				return Bundle{}, errf("E303", "duplicate pool %q in %s and %s", pool.Name, prev, pool.SourceFile)
+			}
+			seenPool[pool.Name] = pool.SourceFile
+			b.Pools = append(b.Pools, pool)
+		}
+		for _, rr := range file.Routes {
+			if prev, ok := seenRoute[rr.Name]; ok {
+				return Bundle{}, errf("E304", "duplicate route %q in %s and %s", rr.Name, prev, rr.SourceFile)
+			}
+			seenRoute[rr.Name] = rr.SourceFile
+			b.Routes = append(b.Routes, rr)
+		}
+		for _, tc := range file.TopoCases {
+			if prev, ok := seenTopoCase[tc.Name]; ok {
+				return Bundle{}, errf("E321", "duplicate topology case %q in %s and %s", tc.Name, prev, tc.SourceFile)
+			}
+			seenTopoCase[tc.Name] = tc.SourceFile
+			b.TopoCases = append(b.TopoCases, tc)
+		}
+		if file.Listener != nil {
+			if b.Listener.Addr != "" {
+				return Bundle{}, errf("E322", "duplicate listener block in %s", path)
+			}
+			b.Listener = *file.Listener
+		}
+		if file.TLS != nil {
+			if b.TLS != nil {
+				return Bundle{}, errf("E323", "duplicate tls block in %s", path)
+			}
+			tls := *file.TLS
+			b.TLS = &tls
+		}
+		if file.QUIC != nil {
+			if b.QUIC != nil {
+				return Bundle{}, errf("E324", "duplicate quic block in %s", path)
+			}
+			q := *file.QUIC
+			b.QUIC = &q
 		}
 	}
 	sort.Slice(b.Policies, func(i, j int) bool {
 		return strings.Compare(b.Policies[i].Name, b.Policies[j].Name) < 0
+	})
+	sort.Slice(b.Pools, func(i, j int) bool {
+		return strings.Compare(b.Pools[i].Name, b.Pools[j].Name) < 0
+	})
+	// Routes preserve source order; do not sort — route IDs depend on order.
+	sort.Slice(b.TopoCases, func(i, j int) bool {
+		return strings.Compare(b.TopoCases[i].Name, b.TopoCases[j].Name) < 0
 	})
 	return b, nil
 }

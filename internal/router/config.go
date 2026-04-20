@@ -1,156 +1,99 @@
+// Package router defines the typed topology shape consumed by the proxy.
+//
+// The source of truth for these values is the .intent DSL; the compiler
+// (`tachyon intent build`) generates Go that populates these structs and
+// writes them to `internal/intent/generated/current/config_gen.go`. There is
+// no YAML loader and no runtime config parsing.
 package router
 
-import (
-	"errors"
-	"os"
-	"time"
+import "time"
 
-	"gopkg.in/yaml.v3"
-)
-
-// Rule is one entry from the config file.
+// Rule is one routing rule.
 //
 // Exactly one of Upstream (single-upstream shorthand) or Upstreams
-// (explicit weighted list) must be set. A Rule with both set, or with
-// neither, is rejected at Load.
+// (explicit weighted list) must be set. The compiler rejects rules with
+// both set, or with neither.
 type Rule struct {
-	Host      string             `yaml:"host"`
-	Path      string             `yaml:"path"`
-	Upstream  string             `yaml:"upstream"`
-	Upstreams []WeightedUpstream `yaml:"upstreams"`
-	Intents   []string           `yaml:"intents"`
+	// Name is the stable identifier from the `.intent` source. Used by
+	// topology case tests and debug tooling.
+	Name      string
+	Host      string
+	Path      string
+	Upstream  string
+	Upstreams []WeightedUpstream
+	Intents   []string
 
-	// RouteID is assigned from source order at load time. It is not part
-	// of the YAML shape; generated intent registries use it to bind
-	// route-local programs to the router's match result.
-	RouteID int `yaml:"-"`
+	// RouteID is assigned from source order at compile time. It is used by
+	// the generated intent registry to bind route-local programs to the
+	// router's match result.
+	RouteID int
 }
 
-// WeightedUpstream is one entry in a Rule's weighted multi-upstream
-// list. Weight is relative; 0 is normalised to 1 at Load. The router
-// pre-computes a cumulative-weight table so pick cost is one rand +
-// one linear scan (fine for 2–10 upstreams; nothing bigger is
-// realistic).
+// WeightedUpstream is one entry in a Rule's weighted multi-upstream list.
+// Weight is relative; 0 is normalised to 1 by the compiler.
 type WeightedUpstream struct {
-	Name   string `yaml:"name"`
-	Weight int    `yaml:"weight"`
+	Name   string
+	Weight int
 }
 
 // Upstream is a named pool definition.
 type Upstream struct {
-	Addrs            []string          `yaml:"addrs"`
-	IdlePerHost      int               `yaml:"idle_per_host"`
-	ConnectTimeout   time.Duration     `yaml:"connect_timeout"`
-	OutlierDetection *OutlierDetection `yaml:"outlier_detection"`
+	Addrs            []string
+	IdlePerHost      int
+	ConnectTimeout   time.Duration
+	OutlierDetection *OutlierDetection
 	// LBPolicy selects the upstream-address policy. Empty / "rr" =
 	// round-robin (default); "p2c_ewma" = power-of-two-choices with
-	// latency EWMA. Unknown values are rejected at Load.
-	LBPolicy     string        `yaml:"lb_policy"`
-	HealthCheck  *HealthCheck  `yaml:"health_check"`
-	RetryBudget  *RetryBudget  `yaml:"retry_budget"`
+	// latency EWMA.
+	LBPolicy    string
+	HealthCheck *HealthCheck
+	RetryBudget *RetryBudget
 }
 
-// HealthCheck configures the per-pool active health probe. When present,
-// tachyon starts one background goroutine per pool that issues an HTTP
-// HEAD to every address at the given interval; addresses that fail are
-// removed from rotation until they start responding again.
-//
-// Absent block → feature disabled (no goroutine, no overhead).
+// HealthCheck configures the per-pool active health probe.
 type HealthCheck struct {
-	// Interval between probe rounds. Default "10s".
-	Interval time.Duration `yaml:"interval"`
-	// Path for the HTTP HEAD probe. Default "/health".
-	Path string `yaml:"path"`
-	// Timeout for the full dial + HTTP round-trip. Default "1s".
-	Timeout time.Duration `yaml:"timeout"`
+	Interval time.Duration
+	Path     string
+	Timeout  time.Duration
 }
 
 // RetryBudget bounds retry traffic to a configurable fraction of
-// successful requests. Absent block → retries are never attempted
-// (the handler sends 502 immediately on gateway error, as before).
+// successful requests. Nil → retries disabled.
 type RetryBudget struct {
-	// RetryPercent controls how quickly the budget replenishes.
-	// One retry token is added per (100/RetryPercent) successes.
-	// E.g. 20 means one token per 5 successes. Default 20.
-	RetryPercent int `yaml:"retry_percent"`
-	// MinTokens is always available regardless of recent success count.
-	// Prevents starvation at startup or after idle periods. Default 3.
-	MinTokens int `yaml:"min_tokens"`
+	RetryPercent int
+	MinTokens    int
 }
 
 // OutlierDetection enables passive ejection of upstream addresses that
-// return streaks of 5xx or gateway errors. Leaving the whole section
-// absent from the YAML disables ejection entirely (no runtime cost on
-// the hot path). Zero fields within the struct fall back to defaults.
+// return streaks of 5xx or gateway errors. Nil → ejection disabled.
 type OutlierDetection struct {
-	Consecutive5xx        int           `yaml:"consecutive_5xx"`
-	ConsecutiveGatewayErr int           `yaml:"consecutive_gateway_errors"`
-	EjectionDuration      time.Duration `yaml:"ejection_duration"`
-	MaxEjectedPercent     int           `yaml:"max_ejected_percent"`
+	Consecutive5xx        int
+	ConsecutiveGatewayErr int
+	EjectionDuration      time.Duration
+	MaxEjectedPercent     int
 }
 
-// Config is the full YAML shape.
+// Config is the full topology shape.
 type Config struct {
-	Listen    string              `yaml:"listen"`
-	Routes    []Rule              `yaml:"routes"`
-	Upstreams map[string]Upstream `yaml:"upstreams"`
+	Listen    string
+	Routes    []Rule
+	Upstreams map[string]Upstream
 }
 
-// Load parses a YAML config from path and applies defaults where fields are
-// zero. The returned Config is ready to pass to the proxy glue.
-func Load(path string) (*Config, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var c Config
-	if err := yaml.Unmarshal(raw, &c); err != nil {
-		return nil, err
-	}
-	if c.Listen == "" {
-		c.Listen = ":8080"
-	}
-	for name, u := range c.Upstreams {
-		if u.IdlePerHost == 0 {
-			u.IdlePerHost = 256
-		}
-		if u.ConnectTimeout == 0 {
-			u.ConnectTimeout = time.Second
-		}
-		switch u.LBPolicy {
-		case "", "rr", "p2c_ewma":
-		default:
-			return nil, errors.New("router: unknown lb_policy " + u.LBPolicy + " for upstream " + name)
-		}
-		c.Upstreams[name] = u
-	}
-	if len(c.Routes) == 0 {
-		return nil, errors.New("router: config has no routes")
-	}
-	for i, rule := range c.Routes {
-		rule.RouteID = i
-		hasSingle := rule.Upstream != ""
-		hasMulti := len(rule.Upstreams) > 0
-		if hasSingle && hasMulti {
-			return nil, errors.New("router: route may set either upstream or upstreams, not both")
-		}
-		if !hasSingle && !hasMulti {
-			return nil, errors.New("router: route has no upstream")
-		}
-		if hasMulti {
-			for j, wu := range rule.Upstreams {
-				if wu.Name == "" {
-					return nil, errors.New("router: route upstream entry has empty name")
-				}
-				if wu.Weight < 0 {
-					return nil, errors.New("router: route upstream weight must be >= 0")
-				}
-				if wu.Weight == 0 {
-					rule.Upstreams[j].Weight = 1
-				}
-			}
-		}
-		c.Routes[i] = rule
-	}
-	return &c, nil
+// TLSConfig is the optional TLS listener definition; nil means no TLS listener.
+type TLSConfig struct {
+	Addr string
+	Cert string
+	Key  string
+}
+
+// QUICConfig is the optional HTTP/3 / QUIC listener definition; nil means
+// no QUIC listener is bound. Cert/Key fall back to the sibling TLSConfig
+// when left empty — both listeners typically share one cert.
+type QUICConfig struct {
+	Addr string
+	Cert string
+	Key  string
+	// ALPN advertised in the TLS handshake. Defaults to ["h3"] when empty.
+	ALPN []string
 }

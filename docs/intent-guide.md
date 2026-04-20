@@ -1,6 +1,6 @@
 # Intent Guide
 
-Intents are declarative policy files that compile into native Go and attach to routes in `config.yaml`. They let you express rate limits, header mutations, access control, and routing decisions without touching proxy code.
+Intents are declarative policy files that compile into native Go and attach to routes declared in `intent/config.intent`. They let you express rate limits, header mutations, access control, and routing decisions without touching proxy code.
 
 ## Quick Start
 
@@ -43,15 +43,15 @@ tachyon intent build intent/*.intent
 
 This runs the sema pass, generates `internal/intent/generated/current/`, runs all generated tests and allocation budgets, and rebuilds the binary with a fresh PGO profile.
 
-**3. Attach to a route in `config.yaml`:**
+**3. Attach to a route in `intent/config.intent`:**
 
-```yaml
-routes:
-  - host: "api.example.com"
-    path: "/"
-    upstream: pool-a
-    intents:
-      - add_tracing_header
+```
+route api {
+  host "api.example.com"
+  path "/"
+  upstream "pool-a"
+  apply "add_tracing_header"
+}
 ```
 
 ## Policy Syntax

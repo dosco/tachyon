@@ -40,7 +40,27 @@ type Handler struct {
 	// each successful request emits one structured Debug line.
 	accessLog    bool
 	accessLogger *slog.Logger
+
+	// altSvc, when non-empty, is appended as an Alt-Svc response header
+	// on every client response. Set once at startup (before Serve) by
+	// the QUIC bring-up code when an HTTP/3 listener is active.
+	altSvc []byte
 }
+
+// SetAltSvc configures the Alt-Svc header value advertised on H1/H2
+// responses (e.g. `h3=":8443"`). Empty value disables advertisement.
+// Must be called before Serve begins.
+func (h *Handler) SetAltSvc(v string) {
+	if v == "" {
+		h.altSvc = nil
+		return
+	}
+	h.altSvc = []byte(v)
+}
+
+// AltSvc returns the configured Alt-Svc value; used by protocol
+// handlers to inject the header into responses.
+func (h *Handler) AltSvc() []byte { return h.altSvc }
 
 // routerPools is the atomically-swappable bundle. Kept together so a
 // reload installs a consistent pair: the new Router always references
@@ -273,7 +293,7 @@ func (h *Handler) ServeConn(c net.Conn) {
 		// but keep the client conn open for the next request unless the
 		// client asked for Connection: close.
 		fwdStart := time.Now()
-		fwdErr := forward(c, clientTCP, stickyUC, &req, &resp, bodyHead, wr, rs, clientAddr, h.strictDeadlines, reqIntent, routeSet)
+		fwdErr := forward(c, clientTCP, stickyUC, &req, &resp, bodyHead, wr, rs, clientAddr, h.strictDeadlines, reqIntent, routeSet, h.altSvc)
 		if fwdErr != nil {
 			// A malformed chunked body is a client-framing error; we
 			// may have already written a partial body to upstream so
@@ -306,7 +326,7 @@ func (h *Handler) ServeConn(c net.Conn) {
 			if !malformed && pool.AllowRetry() && isIdempotent(req.MethodBytes()) {
 				if retryUC, rerr := pool.Acquire(); rerr == nil {
 					fwdStart = time.Now()
-					retryErr := forward(c, clientTCP, retryUC, &req, &resp, bodyHead, wr, rs, clientAddr, h.strictDeadlines, reqIntent, routeSet)
+					retryErr := forward(c, clientTCP, retryUC, &req, &resp, bodyHead, wr, rs, clientAddr, h.strictDeadlines, reqIntent, routeSet, h.altSvc)
 					if retryErr == nil {
 						// Retry succeeded: account for the response and
 						// let the normal post-forward path run.
@@ -481,6 +501,7 @@ func forward(
 	strictDeadlines bool,
 	reqIntent irt.RequestResult,
 	routeSet irt.RoutePolicySet,
+	altSvc []byte,
 ) error {
 	// --- Build upstream request ------------------------------------------
 
@@ -635,6 +656,9 @@ func forward(
 		w = http1.AppendHeader(w, []byte(hm.Name), []byte(hm.Value))
 		return true
 	})
+	if len(altSvc) > 0 {
+		w = http1.AppendHeader(w, []byte("alt-svc"), altSvc)
+	}
 	w = http1.AppendEndOfHeaders(w)
 
 	// Pack respBody after headers if it fits. Most 1 KiB responses land

@@ -25,9 +25,12 @@ policy q { match req.cookie("s") == "v" request { route_to("pool") } }`)
 
 	f.Fuzz(func(t *testing.T, src string) {
 		_, _ = ParseFiles(nil) // ensure Discover path is reachable
-		policies, _, _ := parseSource("<fuzz>", src)
+		file, err := parseSource("<fuzz>", src)
+		if err != nil || file == nil {
+			return
+		}
 		// If parsing succeeds, basic invariants must hold.
-		for _, p := range policies {
+		for _, p := range file.Policies {
 			if p.Name == "" {
 				t.Error("parsed policy with empty name")
 			}
@@ -53,11 +56,11 @@ policy p {
 }`)
 
 	f.Fuzz(func(t *testing.T, src string) {
-		policies, version, err := parseSource("<fuzz>", src)
-		if err != nil {
+		file, err := parseSource("<fuzz>", src)
+		if err != nil || file == nil {
 			return
 		}
-		b := Bundle{Version: version, Policies: policies}
+		b := Bundle{Version: file.Version, Policies: file.Policies}
 		if b.Version == "" {
 			b.Version = "0.1"
 		}

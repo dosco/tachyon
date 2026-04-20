@@ -104,6 +104,26 @@ nanosecond fuel accounting is not free. Mitigation: opt-in per route for
 fine metering; coarse wall-clock mode as default; lock-free EDF queue
 per worker (GOMAXPROCS=1 means no contention anyway).
 
+## Track E — Parity gaps vs nginx and Pingora
+
+Features both incumbents ship that tachyon does not yet support, even via intents.
+
+- [ ] **HTTP/3 / QUIC** — both nginx and Pingora support it; tachyon is HTTP/1.1 + H2 only.
+- [ ] **L4 / stream proxying** — TCP and UDP stream proxy (nginx `stream {}`, Pingora L4); tachyon is HTTP-only.
+- [ ] **gRPC-specific handling** — first-class gRPC transcoding, trailers, status-to-HTTP mapping.
+- [ ] **Edge/response caching** — cache with revalidation, stale-while-revalidate, purge API.
+- [ ] **Request mirroring / shadow traffic** — duplicate a request to a shadow upstream without blocking the primary.
+- [ ] **Response body transforms** — intents only mutate headers; no body rewrite, no `sub_filter`, no on-the-fly gzip/brotli for arbitrary upstreams.
+- [ ] **Static file serving** — `try_files`, `X-Accel-Redirect`, large-file serving, range requests from disk.
+- [ ] **WAF integration** — ModSecurity / Coraza ruleset support.
+- [ ] **Dynamic service discovery** — Consul, K8s EDS, DNS SRV; upstreams are static config today.
+- [ ] **Distributed rate limiting** — `rate_limit_local` is per-process; no shared counter across workers or nodes.
+- [ ] **Open plugin extensibility** — intents have a closed primitive set; no way to call arbitrary code, Redis, or novel logic without modifying tachyon source.
+- [ ] **Richer auth subrequests** — `auth_external` exists but lacks nginx-style header propagation shaping and body inspection.
+- [ ] **mTLS client verification with dynamic CAs** — per-route CA rotation without restart.
+- [ ] **WebSockets and SSE tuning primitives** — upgrade handling and long-lived connection controls.
+- [ ] **Mail proxy** — SMTP / IMAP / POP3 proxying (nginx only; Pingora doesn't ship this either).
+
 ## Sequencing
 
 A and C are mostly software. B is hardware-dependent and slower. D

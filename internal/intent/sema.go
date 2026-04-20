@@ -1,20 +1,19 @@
 package intent
 
 import (
+	"path/filepath"
 	"strings"
 
 	rt "tachyon/internal/intent/runtime"
+	"tachyon/internal/router"
 )
 
 // RuntimeClass describes the capability tier a policy requires.
 type RuntimeClass int
 
 const (
-	// ClassA policies use only local, stateless operations.
 	ClassA RuntimeClass = iota
-	// ClassB policies use local stateful operations (rate limiting, canary).
 	ClassB
-	// ClassC policies call external services and are not supported on uring paths.
 	ClassC
 )
 
@@ -49,8 +48,14 @@ type IRPolicy struct {
 
 // IRBundle is a validated bundle ready for code generation.
 type IRBundle struct {
-	Version  string
-	Policies []IRPolicy
+	Version   string
+	Policies  []IRPolicy
+	Pools     []Pool
+	Routes    []Route // with RouteIDs assigned and upstreams normalised
+	Listener  Listener
+	TLS       *TLSConfig
+	QUIC      *QUICConfig
+	TopoCases []TopoCase
 }
 
 // requestOnlyActions cannot appear in response or error blocks.
@@ -66,23 +71,227 @@ var requestOnlyActions = map[rt.ActionKind]bool{
 	rt.ActionAuthExternal:   true,
 }
 
-// Check validates a Bundle, classifies each policy by RuntimeClass, and returns
-// a validated IRBundle ready for code generation.
-// Returns an *Error with a stable E2xx code on semantic failures.
+// Check validates a Bundle and returns an IRBundle ready for code generation.
 func Check(bundle Bundle) (IRBundle, error) {
 	out := IRBundle{Version: bundle.Version, Policies: make([]IRPolicy, 0, len(bundle.Policies))}
+	policyNames := map[string]bool{}
 	for _, p := range bundle.Policies {
 		ir, err := checkPolicy(p)
 		if err != nil {
 			return IRBundle{}, err
 		}
 		out.Policies = append(out.Policies, ir)
+		policyNames[p.Name] = true
 	}
+
+	// Pools.
+	poolNames := map[string]bool{}
+	for _, pool := range bundle.Pools {
+		if pool.Name == "" || pool.Name == "*" {
+			return IRBundle{}, errf("E315", "pool %q: reserved pool name", pool.Name)
+		}
+		if len(pool.Addrs) == 0 {
+			return IRBundle{}, errf("E310", "pool %q: addrs must not be empty", pool.Name)
+		}
+		switch pool.LBPolicy {
+		case "", "rr", "p2c_ewma":
+		default:
+			return IRBundle{}, errf("E308", "pool %q: unknown lb_policy %q", pool.Name, pool.LBPolicy)
+		}
+		if pool.OutlierDetection != nil {
+			if pool.OutlierDetection.MaxEjectedPercent < 0 || pool.OutlierDetection.MaxEjectedPercent > 100 {
+				return IRBundle{}, errf("E311", "pool %q: max_ejected_percent must be in 0..100", pool.Name)
+			}
+		}
+		if pool.HealthCheck != nil && pool.HealthCheck.Path != "" && !strings.HasPrefix(pool.HealthCheck.Path, "/") {
+			return IRBundle{}, errf("E320", "pool %q: health_check path must start with /", pool.Name)
+		}
+		if pool.RetryBudget != nil {
+			if pool.RetryBudget.RetryPercent < 0 || pool.RetryBudget.RetryPercent > 100 {
+				return IRBundle{}, errf("E319", "pool %q: retry_percent must be in 0..100", pool.Name)
+			}
+		}
+		poolNames[pool.Name] = true
+		out.Pools = append(out.Pools, pool)
+	}
+
+	// Routes. Preserve bundle.Routes ordering; the order reflects source
+	// order across all files after bundle assembly.
+	routeNameSeen := map[string]bool{}
+	type hostPathKey struct{ host, path string }
+	hostPathSeen := map[hostPathKey]string{}
+	for i, rr := range bundle.Routes {
+		if rr.Name == "" {
+			return IRBundle{}, errf("E305", "route at %s:%d: route block requires a name", rr.SourceFile, rr.Line)
+		}
+		if routeNameSeen[rr.Name] {
+			return IRBundle{}, errf("E304", "duplicate route name %q", rr.Name)
+		}
+		routeNameSeen[rr.Name] = true
+
+		hasSingle := rr.Upstream != ""
+		hasMulti := len(rr.Upstreams) > 0
+		if hasSingle && hasMulti {
+			return IRBundle{}, errf("E306", "route %q: set either upstream or upstreams, not both", rr.Name)
+		}
+		if !hasSingle && !hasMulti {
+			return IRBundle{}, errf("E306", "route %q: no upstream specified", rr.Name)
+		}
+		if hasSingle {
+			if !poolNames[rr.Upstream] {
+				return IRBundle{}, errf("E300", "route %q: references unknown pool %q", rr.Name, rr.Upstream)
+			}
+		}
+		if hasMulti {
+			for j, wu := range rr.Upstreams {
+				if wu.Name == "" {
+					return IRBundle{}, errf("E301", "route %q: weighted upstream entry %d has empty name", rr.Name, j)
+				}
+				if !poolNames[wu.Name] {
+					return IRBundle{}, errf("E301", "route %q: weighted upstream %q references unknown pool", rr.Name, wu.Name)
+				}
+				if wu.Weight < 0 {
+					return IRBundle{}, errf("E309", "route %q: weighted upstream %q has negative weight", rr.Name, wu.Name)
+				}
+				if wu.Weight == 0 {
+					rr.Upstreams[j].Weight = 1
+				}
+			}
+		}
+		for _, applyName := range rr.Apply {
+			if !policyNames[applyName] {
+				return IRBundle{}, errf("E302", "route %q: apply references undefined policy %q", rr.Name, applyName)
+			}
+		}
+		key := hostPathKey{host: rr.Host, path: rr.Path}
+		if other, ok := hostPathSeen[key]; ok {
+			return IRBundle{}, errf("E306", "route %q: conflicts with route %q (same host+path)", rr.Name, other)
+		}
+		hostPathSeen[key] = rr.Name
+		// Carry route ID by slice index.
+		_ = i
+		out.Routes = append(out.Routes, rr)
+	}
+
+	if len(out.Routes) == 0 && len(bundle.Pools) > 0 {
+		return IRBundle{}, errf("E316", "no routes declared; at least one route is required")
+	}
+
+	// Listener.
+	listener := bundle.Listener
+	if listener.Addr == "" {
+		listener.Addr = ":8080"
+	}
+	if !strings.Contains(listener.Addr, ":") {
+		return IRBundle{}, errf("E314", "listener addr %q: missing port", listener.Addr)
+	}
+	out.Listener = listener
+
+	// TLS.
+	if bundle.TLS != nil {
+		tls := *bundle.TLS
+		// Both-or-neither for cert/key.
+		hasCert := tls.Cert != ""
+		hasKey := tls.Key != ""
+		if hasCert != hasKey {
+			return IRBundle{}, errf("E313", "tls block must set both cert and key, or neither")
+		}
+		// Resolve cert/key relative to the source file's directory. Find a
+		// representative source file to anchor the path. Prefer any .intent
+		// file in the bundle.
+		anchor := anchorDir(bundle)
+		if hasCert {
+			tls.Cert = resolveRelative(anchor, tls.Cert)
+			tls.Key = resolveRelative(anchor, tls.Key)
+		}
+		if tls.Addr != "" && !strings.Contains(tls.Addr, ":") {
+			return IRBundle{}, errf("E314", "tls listen %q: missing port", tls.Addr)
+		}
+		if tls.Addr != "" && tls.Addr == listener.Addr {
+			return IRBundle{}, errf("E317", "tls listen %q collides with plaintext listener", tls.Addr)
+		}
+		out.TLS = &tls
+	}
+
+	// QUIC (HTTP/3). Follows the same cert/key resolution rules as tls;
+	// falls back to the sibling tls { ... } block when cert/key omitted.
+	if bundle.QUIC != nil {
+		q := *bundle.QUIC
+		if q.Addr == "" {
+			return IRBundle{}, errf("E325", "quic block must set listen")
+		}
+		if !strings.Contains(q.Addr, ":") {
+			return IRBundle{}, errf("E314", "quic listen %q: missing port", q.Addr)
+		}
+		if q.Addr == listener.Addr {
+			return IRBundle{}, errf("E317", "quic listen %q collides with plaintext listener", q.Addr)
+		}
+		hasCert := q.Cert != ""
+		hasKey := q.Key != ""
+		if hasCert != hasKey {
+			return IRBundle{}, errf("E313", "quic block must set both cert and key, or neither")
+		}
+		anchor := anchorDir(bundle)
+		if hasCert {
+			q.Cert = resolveRelative(anchor, q.Cert)
+			q.Key = resolveRelative(anchor, q.Key)
+		} else if out.TLS != nil {
+			q.Cert = out.TLS.Cert
+			q.Key = out.TLS.Key
+		} else {
+			return IRBundle{}, errf("E326", "quic block requires cert/key, or a sibling tls { cert, key } block")
+		}
+		if len(q.ALPN) == 0 {
+			q.ALPN = []string{"h3"}
+		}
+		out.QUIC = &q
+	}
+
+	// Topology cases: validate route references.
+	for _, tc := range bundle.TopoCases {
+		if tc.Expect.Route != "" && !routeNameSeen[tc.Expect.Route] {
+			return IRBundle{}, errf("E318", "case %q: expect.route references undefined route %q", tc.Name, tc.Expect.Route)
+		}
+	}
+	out.TopoCases = bundle.TopoCases
+
 	return out, nil
 }
 
+// anchorDir picks a directory to resolve TLS-relative paths against. We use
+// the directory of the first source file seen in the bundle (policies,
+// pools, routes, or topology cases — whichever appears first).
+func anchorDir(b Bundle) string {
+	if len(b.Policies) > 0 && b.Policies[0].SourceFile != "" {
+		return filepath.Dir(b.Policies[0].SourceFile)
+	}
+	if len(b.Pools) > 0 && b.Pools[0].SourceFile != "" {
+		return filepath.Dir(b.Pools[0].SourceFile)
+	}
+	if len(b.Routes) > 0 && b.Routes[0].SourceFile != "" {
+		return filepath.Dir(b.Routes[0].SourceFile)
+	}
+	if len(b.TopoCases) > 0 && b.TopoCases[0].SourceFile != "" {
+		return filepath.Dir(b.TopoCases[0].SourceFile)
+	}
+	return "."
+}
+
+func resolveRelative(anchor, p string) string {
+	if p == "" {
+		return ""
+	}
+	if filepath.IsAbs(p) {
+		return p
+	}
+	abs, err := filepath.Abs(filepath.Join(anchor, p))
+	if err != nil {
+		return filepath.Join(anchor, p)
+	}
+	return abs
+}
+
 func checkPolicy(p Policy) (IRPolicy, error) {
-	// E200: action used in wrong phase.
 	for _, act := range p.Response {
 		if requestOnlyActions[act.Kind] {
 			return IRPolicy{}, errf("E200", "policy %q: %q is not valid in a response block", p.Name, act.Kind)
@@ -93,8 +302,6 @@ func checkPolicy(p Policy) (IRPolicy, error) {
 			return IRPolicy{}, errf("E200", "policy %q: %q is not valid in an error block", p.Name, act.Kind)
 		}
 	}
-
-	// E201: multiple terminal actions in request block produce unreachable code.
 	terminals := 0
 	for _, act := range p.Request {
 		switch act.Kind {
@@ -105,8 +312,6 @@ func checkPolicy(p Policy) (IRPolicy, error) {
 	if terminals > 1 {
 		return IRPolicy{}, errf("E201", "policy %q: multiple terminal actions in request block; only the first will execute", p.Name)
 	}
-
-	// Canonicalize: lowercase header names in match conditions.
 	match := make([]rt.MatchCondition, len(p.Match))
 	copy(match, p.Match)
 	for i, cond := range match {
@@ -114,8 +319,6 @@ func checkPolicy(p Policy) (IRPolicy, error) {
 			match[i].Name = strings.ToLower(cond.Name)
 		}
 	}
-
-	// E202: contradictory match conditions (same field+name, different values).
 	seen := map[string]string{}
 	for _, cond := range match {
 		key := string(cond.Field) + "|" + cond.Name
@@ -125,8 +328,6 @@ func checkPolicy(p Policy) (IRPolicy, error) {
 		}
 		seen[key] = cond.Value
 	}
-
-	// Classify: highest class wins.
 	class := ClassA
 	for _, prim := range p.Primitives {
 		switch rt.ActionKind(prim) {
@@ -138,7 +339,6 @@ func checkPolicy(p Policy) (IRPolicy, error) {
 			}
 		}
 	}
-
 	return IRPolicy{
 		Name:           p.Name,
 		Priority:       p.Priority,
@@ -154,3 +354,6 @@ func checkPolicy(p Policy) (IRPolicy, error) {
 		SourceFile:     p.SourceFile,
 	}, nil
 }
+
+// Unused import guard (router) — used in type references below.
+var _ = router.Rule{}

@@ -291,6 +291,9 @@ func (h *H2Handler) ServeH2(method, path, authority string, fields []http2.Heade
 		outFields = append(outFields, http2.HeaderField{Name: lowerString([]byte(hm.Name)), Value: hm.Value})
 		return true
 	})
+	if alt := h.parent.AltSvc(); len(alt) > 0 {
+		outFields = append(outFields, http2.HeaderField{Name: "alt-svc", Value: string(alt)})
+	}
 	if err := w.WriteHeader(int(resp.Status), outFields); err != nil {
 		return err
 	}

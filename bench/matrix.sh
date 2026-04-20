@@ -28,7 +28,7 @@ wait_port() {
 
 start_nginx()   { bash bench/proxies/nginx.start   >/tmp/p.log 2>&1 && wait_port 8080; }
 start_pingora() { bash bench/proxies/pingora.start >/tmp/p.log 2>&1 & sleep 2; wait_port 8080; }
-start_tach()    { setsid nohup ./tachyon -config config.yaml -workers "$(nproc)" </dev/null >/tmp/p.log 2>&1 & wait_port 8080; }
+start_tach()    { setsid nohup ./tachyon -config intent/ -workers "$(nproc)" </dev/null >/tmp/p.log 2>&1 & wait_port 8080; }
 
 run_h2() {
   local label="$1"; shift

@@ -34,6 +34,14 @@ http1/                          - zero-alloc HTTP/1.1 codec
 http2/         (Phase 5)        - zero-alloc HTTP/2 server
   frame/                        - per-frame-type files
   hpack/                        - static + dynamic tables, Huffman
+quic/          (Phase 8)        - hand-rolled QUIC (RFC 9000/9001/9002)
+  packet/                       - long/short headers, header protection
+  crypto/                       - initial secrets, AEAD, HP masking
+  tls/                          - crypto/tls QUIC driver
+  frame/                        - CRYPTO, STREAM, ACK, MAX_DATA, ...
+  recovery/                     - RTT estimator, loss detection, PTO
+  congestion/                   - NewReno (CUBIC/BBR TBD)
+http3/         (Phase 8)        - HTTP/3 framing + QPACK (RFC 9114/9204)
 tlsutil/       (Phase 4)        - crypto/tls glue, optional kTLS
 metrics/                        - HDR histogram
 
@@ -78,6 +86,24 @@ See the plan file for the full list; the short version:
 5. HTTP/2 server (the big one).
 6. kTLS behind build tag.
 7. PGO from real bench profile.
+8. HTTP/3 and QUIC, hand-rolled on stdlib UDP. **In progress.**
+
+## HTTP/3 and QUIC
+
+tachyon terminates HTTP/3 on its own QUIC stack, no external library. The
+choice mirrors the rest of the proxy: the hot paths are ours, so we see and
+own every allocation. `quic/` is the transport — connection IDs, packet
+protection, TLS 1.3 driven through `crypto/tls`'s QUIC API, per-space packet
+number tracking, and RFC 9002 loss detection. `http3/` layers framing and
+QPACK on top and hands each request stream to the existing `internal/proxy`
+pipeline, so every intent policy works identically on H1, H2, and H3.
+
+v1 uses stdlib `net.ListenUDP` with SO_REUSEPORT; io_uring UDP
+(`recvmsg`/`sendmsg`/GSO) is a later phase and deferred until the TCP path's
+numbers settle. Activation is the same as every other feature: a
+`quic { listen ":8443" }` block in `intent/config.intent` causes the
+compiler to emit a non-nil `QUICConfig()` and the worker opens a UDP
+socket alongside its TCP listener. Absent block, no socket, no cost.
 
 ## Benchmark
 
