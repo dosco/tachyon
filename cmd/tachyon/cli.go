@@ -26,14 +26,56 @@ func runCLI(args []string) (bool, error) {
 	if len(args) == 0 {
 		return false, nil
 	}
+	if isTopLevelHelpFlag(args[0]) {
+		fmt.Print(topLevelUsage())
+		return true, nil
+	}
 	switch args[0] {
+	case "help":
+		if len(args) == 1 {
+			fmt.Print(topLevelUsage())
+			return true, nil
+		}
+		switch args[1] {
+		case "serve":
+			if len(args) > 2 && args[2] == "--help-advanced" {
+				fmt.Print(serveAdvancedUsage())
+				return true, nil
+			}
+			fmt.Print(serveUsage())
+			return true, nil
+		case "intent":
+			fmt.Print(intentUsage())
+			return true, nil
+		case "traffic":
+			fmt.Print(trafficUsage())
+			return true, nil
+		default:
+			fmt.Printf("unknown command %q\n", args[1])
+			fmt.Print(topLevelUsage())
+			return true, nil
+		}
 	case "serve":
+		if len(args) > 1 {
+			switch args[1] {
+			case "-h", "--help", "help":
+				fmt.Print(serveUsage())
+				return true, nil
+			case "--help-advanced":
+				fmt.Print(serveAdvancedUsage())
+				return true, nil
+			}
+		}
 		return false, nil
 	case "intent":
 		return true, runIntentCLI(args[1:])
 	case "traffic":
 		return true, runTrafficCLI(args[1:])
 	default:
+		if args[0] == "--help-advanced" {
+			fmt.Print(serveAdvancedUsage())
+			return true, nil
+		}
 		if strings.HasPrefix(args[0], "-") {
 			return false, nil
 		}
@@ -42,8 +84,21 @@ func runCLI(args []string) (bool, error) {
 }
 
 func runIntentCLI(args []string) error {
-	if len(args) == 0 {
-		fmt.Println("usage: tachyon intent <grammar|primitives|examples|scaffold|agent|errors|lint|build|verify|bench|diff|explain>")
+	if len(args) == 0 || isHelpFlag(args[0]) {
+		fmt.Print(intentUsage())
+		return nil
+	}
+	if args[0] == "help" {
+		if len(args) == 1 {
+			fmt.Print(intentUsage())
+			return nil
+		}
+		if usage := intentSubcommandUsage(args[1]); usage != "" {
+			fmt.Print(usage)
+			return nil
+		}
+		fmt.Printf("unknown intent subcommand %q\n", args[1])
+		fmt.Print(intentUsage())
 		return nil
 	}
 	switch args[0] {
@@ -122,7 +177,13 @@ func runIntentCLI(args []string) error {
 	case "explain":
 		fs := flag.NewFlagSet("intent explain", flag.ContinueOnError)
 		caseName := fs.String("case", "", "policy/case name")
+		fs.Usage = func() {
+			fmt.Print(intentExplainUsage())
+		}
 		if err := fs.Parse(args[1:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
 			return err
 		}
 		if *caseName == "" {
@@ -142,8 +203,21 @@ func runIntentCLI(args []string) error {
 }
 
 func runTrafficCLI(args []string) error {
-	if len(args) == 0 {
-		fmt.Println("usage: tachyon traffic <record|replay|explain>")
+	if len(args) == 0 || isHelpFlag(args[0]) {
+		fmt.Print(trafficUsage())
+		return nil
+	}
+	if args[0] == "help" {
+		if len(args) == 1 {
+			fmt.Print(trafficUsage())
+			return nil
+		}
+		if usage := trafficSubcommandUsage(args[1]); usage != "" {
+			fmt.Print(usage)
+			return nil
+		}
+		fmt.Printf("unknown traffic subcommand %q\n", args[1])
+		fmt.Print(trafficUsage())
 		return nil
 	}
 	switch args[0] {
@@ -151,7 +225,13 @@ func runTrafficCLI(args []string) error {
 		fs := flag.NewFlagSet("traffic record", flag.ContinueOnError)
 		out := fs.String("out", "", "gzip NDJSON artifact path")
 		config := fs.String("config", "intent/", "path to config file")
+		fs.Usage = func() {
+			fmt.Print(trafficRecordUsage())
+		}
 		if err := fs.Parse(args[1:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
 			return err
 		}
 		if *out == "" {
@@ -161,7 +241,13 @@ func runTrafficCLI(args []string) error {
 	case "replay":
 		fs := flag.NewFlagSet("traffic replay", flag.ContinueOnError)
 		config := fs.String("config", "intent/", "path to config file")
+		fs.Usage = func() {
+			fmt.Print(trafficReplayUsage())
+		}
 		if err := fs.Parse(args[1:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
 			return err
 		}
 		if fs.NArg() != 1 {
@@ -178,7 +264,13 @@ func runTrafficCLI(args []string) error {
 		artifact := fs.String("artifact", "", "artifact path")
 		id := fs.String("id", "", "request id")
 		config := fs.String("config", "intent/", "path to config file")
+		fs.Usage = func() {
+			fmt.Print(trafficExplainUsage())
+		}
 		if err := fs.Parse(args[1:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
 			return err
 		}
 		if *artifact == "" || *id == "" {
@@ -196,6 +288,192 @@ func runTrafficCLI(args []string) error {
 	default:
 		return fmt.Errorf("unknown traffic subcommand %q", args[0])
 	}
+}
+
+func isHelpFlag(arg string) bool {
+	return arg == "-h" || arg == "--help"
+}
+
+func isTopLevelHelpFlag(arg string) bool {
+	return isHelpFlag(arg)
+}
+
+func topLevelUsage() string {
+	return `usage: tachyon <serve|intent|traffic|help>
+
+commands:
+  tachyon serve [--help-advanced] [FLAGS]
+    run the reverse proxy
+  tachyon intent <subcommand> [args...]
+    compiler, docs, and policy workflow
+  tachyon traffic <subcommand> [args...]
+    record, replay, and explain traffic artifacts
+  tachyon help [command]
+    show command usage
+
+help:
+  tachyon serve --help
+    print brief serve usage
+  tachyon intent --help
+    print intent subcommand usage
+  tachyon traffic --help
+    print traffic subcommand usage
+  tachyon help <command>
+    same thing, but as a subcommand
+
+advanced:
+  tachyon --help-advanced
+    print the proxy operator knobs
+  tachyon serve --help-advanced
+    same advanced proxy knob list
+`
+}
+
+func serveUsage() string {
+	return `usage: tachyon serve [--help-advanced] [FLAGS]
+
+run the reverse proxy. use --help-advanced to print the operator knobs.
+subcommands follow the same pattern: tachyon intent --help, tachyon traffic --help.
+`
+}
+
+func intentUsage() string {
+	return `usage: tachyon intent <grammar|primitives|examples|scaffold|agent|errors|lint|build|verify|bench|diff|explain|help> [--help]
+
+discover:
+  tachyon intent grammar
+  tachyon intent primitives
+  tachyon intent examples
+  tachyon intent errors
+  tachyon intent agent
+
+author:
+  tachyon intent scaffold NAME
+
+verify:
+  tachyon intent lint FILE...
+  tachyon intent build FILE...
+  tachyon intent verify FILE...
+  tachyon intent bench FILE...
+
+review:
+  tachyon intent diff OLD NEW
+  tachyon intent explain --case POLICY/CASE
+
+help:
+  tachyon intent --help
+    print this summary
+  tachyon intent help [command]
+`
+}
+
+func intentSubcommandUsage(subcmd string) string {
+	switch subcmd {
+	case "grammar":
+		return "usage: tachyon intent grammar\nprint the DSL reference\n"
+	case "primitives":
+		return "usage: tachyon intent primitives\nlist all available actions\n"
+	case "examples":
+		return "usage: tachyon intent examples\nprint working .intent files\n"
+	case "agent":
+		return "usage: tachyon intent agent\nprint the agent-oriented workflow contract\n"
+	case "errors":
+		return "usage: tachyon intent errors\nprint the stable compiler error catalog\n"
+	case "scaffold":
+		return "usage: tachyon intent scaffold NAME\nprint a starter policy skeleton\n"
+	case "lint":
+		return "usage: tachyon intent lint FILE...\nparse and validate, no code generation\n"
+	case "build":
+		return "usage: tachyon intent build FILE...\nvalidate, generate, test, PGO-build\n"
+	case "verify":
+		return "usage: tachyon intent verify FILE...\nvalidate and generate; run tests but skip PGO build\n"
+	case "bench":
+		return "usage: tachyon intent bench FILE...\ngenerate and run benchmarks\n"
+	case "diff":
+		return "usage: tachyon intent diff OLD NEW\nshow semantic diff between two policy sets\n"
+	case "explain":
+		return intentExplainUsage()
+	case "help":
+		return intentUsage()
+	default:
+		return ""
+	}
+}
+
+func intentExplainUsage() string {
+	return `usage: tachyon intent explain --case POLICY/CASE
+
+flags:
+  --case string
+    policy/case name to trace through the live registry
+`
+}
+
+func trafficUsage() string {
+	return `usage: tachyon traffic <record|replay|explain|help> [--help]
+
+record:
+  tachyon traffic record --out ARTIFACT [--config PATH]
+
+replay:
+  tachyon traffic replay [--config PATH] ARTIFACT
+
+explain:
+  tachyon traffic explain --artifact ARTIFACT --id REQUEST_ID [--config PATH]
+
+help:
+  tachyon traffic --help
+    print this summary
+  tachyon traffic help [command]
+`
+}
+
+func trafficSubcommandUsage(subcmd string) string {
+	switch subcmd {
+	case "record":
+		return trafficRecordUsage()
+	case "replay":
+		return trafficReplayUsage()
+	case "explain":
+		return trafficExplainUsage()
+	case "help":
+		return trafficUsage()
+	default:
+		return ""
+	}
+}
+
+func trafficRecordUsage() string {
+	return `usage: tachyon traffic record --out ARTIFACT [--config PATH]
+
+flags:
+  --out string
+    gzip NDJSON artifact path
+  --config string
+    path to config file
+`
+}
+
+func trafficReplayUsage() string {
+	return `usage: tachyon traffic replay [--config PATH] ARTIFACT
+
+flags:
+  --config string
+    path to config file
+`
+}
+
+func trafficExplainUsage() string {
+	return `usage: tachyon traffic explain --artifact ARTIFACT --id REQUEST_ID [--config PATH]
+
+flags:
+  --artifact string
+    artifact path
+  --id string
+    request id
+  --config string
+    path to config file
+`
 }
 
 func parseBundleArg(arg string) (intent.Bundle, error) {

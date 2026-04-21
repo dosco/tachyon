@@ -283,6 +283,7 @@ go test ./internal/intent/generated/current/ -v
 | `tachyon intent bench FILE...` | Generate and run benchmarks |
 | `tachyon intent diff OLD NEW` | Show semantic diff between two policy sets |
 | `tachyon intent explain --case POLICY/CASE` | Trace a specific case through the live registry |
+| `tachyon intent help [command]` | Print CLI usage for intent subcommands |
 
 ## Semantic Error Codes
 

@@ -60,8 +60,10 @@ What the model wrote is what runs. No interpreter, no sidecar, no DSL-to-bytecod
 
 ```bash
 go build -o tachyon ./cmd/tachyon
-./tachyon -config intent/
+./tachyon serve -config intent/
 ```
+
+`./tachyon --help` shows the subcommand list, and `./tachyon --help-advanced` prints the proxy knobs.
 
 `intent/config.intent`:
 
@@ -82,6 +84,70 @@ route catchall {
 That's it. [`intent/config.intent`](intent/config.intent) is the canonical example with TLS, multi-pool routing, and health checks. [`docs/intent-guide.md`](docs/intent-guide.md) is the policy reference.
 
 ---
+
+## Build, Install, Use
+
+### Build
+
+Build a local binary:
+
+```bash
+go build -o tachyon ./cmd/tachyon
+```
+
+### Install
+
+Install the CLI into your `GOBIN` or `GOPATH/bin`:
+
+```bash
+go install ./cmd/tachyon
+```
+
+### Run
+
+Start the proxy with an intent config:
+
+```bash
+./tachyon serve -config intent/
+```
+
+### Discover
+
+Use the built-in help first:
+
+```bash
+./tachyon --help
+./tachyon --help-advanced
+./tachyon serve --help
+./tachyon intent --help
+./tachyon traffic --help
+```
+
+### Command Map
+
+- `tachyon serve` runs the reverse proxy
+- `tachyon intent` exposes the compiler and policy workflow
+- `tachyon traffic` replays and explains recorded traffic
+
+Common intent commands:
+
+- `tachyon intent grammar`
+- `tachyon intent primitives`
+- `tachyon intent examples`
+- `tachyon intent errors`
+- `tachyon intent scaffold NAME`
+- `tachyon intent lint FILE...`
+- `tachyon intent build FILE...`
+- `tachyon intent verify FILE...`
+- `tachyon intent bench FILE...`
+- `tachyon intent diff OLD NEW`
+- `tachyon intent explain --case POLICY/CASE`
+
+Common traffic commands:
+
+- `tachyon traffic record --out ARTIFACT`
+- `tachyon traffic replay ARTIFACT`
+- `tachyon traffic explain --artifact ARTIFACT --id REQUEST_ID`
 
 ## LLM-driveable, in detail
 

@@ -3,20 +3,21 @@ package main
 import (
 	"flag"
 	"os"
+	"strings"
 	"time"
 )
 
 // flags holds all command-line knobs. Kept in its own type so main.go reads
 // as a sequence of steps rather than a mix of parsing and logic.
 type flags struct {
-	config   string
-	workers  int
-	cpuBase  int
+	config  string
+	workers int
+	cpuBase int
 	// ioMode selects the event loop. "auto" (the default) uses io_uring on
 	// Linux ≥5.7 and stdlib elsewhere. "std" forces the stdlib/epoll path
 	// (faster on loopback-only deployments). "uring" forces io_uring.
 	// End users should not have to set this; auto picks correctly.
-	ioMode   string
+	ioMode string
 	// cpuProfile, if set, writes a CPU pprof profile to this path for the
 	// lifetime of the process. Used by Phase 7 (PGO) to capture a profile
 	// from a real bench run that `go build -pgo=<file>` can consume.
@@ -97,6 +98,20 @@ func parseFlagsForServe(args []string) flags {
 
 func parseFlagsArgs(fs *flag.FlagSet, args []string) flags {
 	var f flags
+	var legacyUring bool
+	registerServeFlags(fs, &f, &legacyUring)
+	if args == nil {
+		fs.Parse(os.Args[1:])
+	} else {
+		fs.Parse(args)
+	}
+	if legacyUring {
+		f.ioMode = "uring"
+	}
+	return f
+}
+
+func registerServeFlags(fs *flag.FlagSet, f *flags, legacyUring *bool) {
 	fs.StringVar(&f.config, "config", "intent/", "path to .intent source directory (compiled topology lives in the binary; this flag is retained for traffic subcommands that need the source tree)")
 	fs.IntVar(&f.workers, "workers", 0,
 		"number of worker processes; 0 = GOMAXPROCS, 1 = run in-process")
@@ -105,8 +120,11 @@ func parseFlagsArgs(fs *flag.FlagSet, args []string) flags {
 	fs.StringVar(&f.ioMode, "io", "auto",
 		"event loop: auto (default; io_uring on Linux ≥5.7, stdlib elsewhere), std (epoll; faster on loopback-only), or uring (force)")
 	// Back-compat: -uring still works as "force uring".
-	var legacyUring bool
-	fs.BoolVar(&legacyUring, "uring", false,
+	if legacyUring == nil {
+		var ignore bool
+		legacyUring = &ignore
+	}
+	fs.BoolVar(legacyUring, "uring", false,
 		"deprecated alias for -io=uring")
 	fs.StringVar(&f.cpuProfile, "cpuprofile", "",
 		"write a CPU pprof profile here; file is suitable for `go build -pgo=<file>`")
@@ -126,13 +144,18 @@ func parseFlagsArgs(fs *flag.FlagSet, args []string) flags {
 		"deprecated: no longer affects -io=auto selection; kept for backwards compatibility")
 	fs.Int64Var(&f.spliceMin, "splice-min", 16384,
 		"uring: min Content-Length (bytes) to trigger SPLICE body forward. 0 disables SPLICE; very large values also disable it (A/B benching). Requires -io=uring.")
-	if args == nil {
-		fs.Parse(os.Args[1:])
-	} else {
-		fs.Parse(args)
-	}
-	if legacyUring {
-		f.ioMode = "uring"
-	}
-	return f
+}
+
+func serveAdvancedUsage() string {
+	var b strings.Builder
+	b.WriteString("usage: tachyon serve [--help-advanced] [FLAGS]\n\n")
+	b.WriteString("advanced proxy knobs:\n")
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(&b)
+	var f flags
+	registerServeFlags(fs, &f, nil)
+	fs.PrintDefaults()
+	b.WriteString("\n")
+	b.WriteString("use `tachyon --help` for the subcommand list.\n")
+	return b.String()
 }

@@ -82,6 +82,8 @@ Start Tachyon in a second terminal:
 ./tachyon serve -config intent/
 ```
 
+Use `./tachyon --help` for the command list and `./tachyon --help-advanced` for the server knobs.
+
 The topology is defined in [intent/config.intent](/Users/vr/src/tachyon/intent/config.intent), which is compiled into the binary alongside the policies. It attaches these two policies to the `example_workflow` route:
 
 - `example_proxy_headers`

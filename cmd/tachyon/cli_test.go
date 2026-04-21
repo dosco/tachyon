@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,6 +135,143 @@ policy bad {
 	}
 }
 
+func TestRunCLIHelpPrintsSubcommandUsage(t *testing.T) {
+	got := captureStdout(t, func() {
+		handled, err := runCLI([]string{"--help"})
+		if err != nil {
+			t.Fatalf("help: %v", err)
+		}
+		if !handled {
+			t.Fatal("expected help to be handled")
+		}
+	})
+	for _, want := range []string{
+		"usage: tachyon <serve|intent|traffic|help>",
+		"tachyon serve [--help-advanced] [FLAGS]",
+		"tachyon intent <subcommand> [args...]",
+		"tachyon traffic <subcommand> [args...]",
+		"tachyon serve --help",
+		"tachyon intent --help",
+		"tachyon traffic --help",
+		"tachyon help <command>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("top-level help output missing %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, "-config") {
+		t.Fatalf("top-level help should not expose operator flags: %q", got)
+	}
+}
+
+func TestRunCLITopLevelHelpAdvancedPrintsFlags(t *testing.T) {
+	got := captureStdout(t, func() {
+		handled, err := runCLI([]string{"--help-advanced"})
+		if err != nil {
+			t.Fatalf("help-advanced: %v", err)
+		}
+		if !handled {
+			t.Fatal("expected help-advanced to be handled")
+		}
+	})
+	for _, want := range []string{
+		"usage: tachyon serve [--help-advanced] [FLAGS]",
+		"-config string",
+		"-io string",
+		"-workers int",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("advanced help output missing %q in %q", want, got)
+		}
+	}
+}
+
+func TestRunCLIServeHelpPrintsBriefUsage(t *testing.T) {
+	got := captureStdout(t, func() {
+		handled, err := runCLI([]string{"serve", "--help"})
+		if err != nil {
+			t.Fatalf("serve help: %v", err)
+		}
+		if !handled {
+			t.Fatal("expected serve help to be handled")
+		}
+	})
+	for _, want := range []string{
+		"usage: tachyon serve [--help-advanced] [FLAGS]",
+		"use --help-advanced to print the operator knobs",
+		"tachyon intent --help",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("serve help output missing %q in %q", want, got)
+		}
+	}
+}
+
+func TestRunCLIHelpSubcommandPrintsBriefUsage(t *testing.T) {
+	got := captureStdout(t, func() {
+		handled, err := runCLI([]string{"help", "serve"})
+		if err != nil {
+			t.Fatalf("help serve: %v", err)
+		}
+		if !handled {
+			t.Fatal("expected help serve to be handled")
+		}
+	})
+	if !strings.Contains(got, "usage: tachyon serve [--help-advanced] [FLAGS]") {
+		t.Fatalf("help serve output missing brief usage: %q", got)
+	}
+}
+
+func TestRunIntentCLIHelpPrintsDiscoverableUsage(t *testing.T) {
+	got := captureStdout(t, func() {
+		if err := runIntentCLI([]string{"--help"}); err != nil {
+			t.Fatalf("help: %v", err)
+		}
+	})
+	for _, want := range []string{
+		"usage: tachyon intent <grammar|primitives|examples|scaffold|agent|errors|lint|build|verify|bench|diff|explain|help> [--help]",
+		"tachyon intent build FILE...",
+		"tachyon intent --help",
+		"tachyon intent help [command]",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("help output missing %q in %q", want, got)
+		}
+	}
+}
+
+func TestRunIntentCLIExplainHelpPrintsUsage(t *testing.T) {
+	got := captureStdout(t, func() {
+		if err := runIntentCLI([]string{"explain", "--help"}); err != nil {
+			t.Fatalf("explain help: %v", err)
+		}
+	})
+	for _, want := range []string{
+		"usage: tachyon intent explain --case POLICY/CASE",
+		"--case string",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("explain help output missing %q in %q", want, got)
+		}
+	}
+}
+
+func TestRunTrafficCLIHelpPrintsUsage(t *testing.T) {
+	got := captureStdout(t, func() {
+		if err := runTrafficCLI([]string{"help", "record"}); err != nil {
+			t.Fatalf("traffic help: %v", err)
+		}
+	})
+	for _, want := range []string{
+		"usage: tachyon traffic record --out ARTIFACT [--config PATH]",
+		"--out string",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("traffic help output missing %q in %q", want, got)
+		}
+	}
+}
+
 // TestExampleWorkflowConfigBindsGeneratedPolicies verifies the compiled
 // topology includes the example_workflow route with its two policies
 // attached.
@@ -170,4 +308,35 @@ func writeFile(t *testing.T, path, contents string) {
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = orig
+	}()
+
+	done := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	out := <-done
+	if err := r.Close(); err != nil {
+		t.Fatalf("close reader: %v", err)
+	}
+	return out
 }

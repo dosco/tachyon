@@ -605,6 +605,7 @@ That means the binary must expose a small, stable CLI surface:
 - `tachyon intent verify <files...>`
 - `tachyon intent bench <files...>`
 - `tachyon intent explain <case>`
+- `tachyon intent help [command]`
 
 The rule is simple:
 
