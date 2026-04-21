@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Start nginx with TLS + QUIC/H3 on :8443 (TCP+UDP).
+set -euo pipefail
+cd ~/tachyon
+
+if [[ ! -f /tmp/bench-tls.crt ]]; then
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+    -keyout /tmp/bench-tls.key -out /tmp/bench-tls.crt \
+    -days 365 -nodes -subj '/CN=bench' 2>/dev/null
+fi
+
+mkdir -p /tmp/nginx-h3-bench
+sudo nginx -s quit 2>/dev/null || true
+sleep 0.3
+sudo nginx -c ~/tachyon/bench/nginx/nginx-h3.conf
+for _ in $(seq 1 30); do
+  ss -tlnp 2>/dev/null | grep -q ':8443' && \
+  ss -ulnp 2>/dev/null | grep -q ':8443' && exit 0
+  sleep 0.1
+done
+echo "nginx-h3 did not open TCP+UDP :8443" >&2; exit 1

@@ -1,6 +1,7 @@
 # build output
 /tachyon
 /origin
+/resume-probe
 
 # benchmark results (large, machine-specific)
 results/

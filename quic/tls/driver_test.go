@@ -75,6 +75,22 @@ func TestDriverHandshake(t *testing.T) {
 	if state.NegotiatedProtocol != "h3" {
 		t.Fatalf("alpn = %q, want h3", state.NegotiatedProtocol)
 	}
+
+	// 1-RTT resumption: server must be able to issue a NewSessionTicket
+	// after handshake completion; the resulting WriteData must land at
+	// Application encryption level so it goes out in a 1-RTT packet.
+	if err := server.SendSessionTicket(); err != nil {
+		t.Fatalf("SendSessionTicket: %v", err)
+	}
+	sawAppTicket := false
+	for _, ev := range server.Events() {
+		if ev.Kind == EventWriteData && ev.Level == LevelApplication {
+			sawAppTicket = true
+		}
+	}
+	if !sawAppTicket {
+		t.Fatalf("no NewSessionTicket WriteData emitted at LevelApplication")
+	}
 }
 
 func selfSignedConfig(t *testing.T, alpn ...string) *tls.Config {

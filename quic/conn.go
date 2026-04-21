@@ -71,6 +71,9 @@ type connState struct {
 
 	outInitialCrypto   []byte
 	outHandshakeCrypto []byte
+	// Post-handshake CRYPTO (NewSessionTicket, KeyUpdate). Routed into
+	// 1-RTT packets by flushApp.
+	outAppCrypto []byte
 
 	ackInitial   bool
 	ackHandshake bool
@@ -78,6 +81,12 @@ type connState struct {
 
 	cryptoOffsetInitial   uint64
 	cryptoOffsetHandshake uint64
+	cryptoOffsetApp       uint64
+
+	// sessionTicketSent is set once we've asked the TLS state machine
+	// to emit a NewSessionTicket after handshake completion. Guards us
+	// from double-emission on repeated Flush calls.
+	sessionTicketSent bool
 
 	handshakeComplete bool
 	handshakeDoneSent bool
@@ -90,6 +99,12 @@ type connState struct {
 	// acceptCh is signalled whenever a new peer-initiated stream is
 	// created, for the Accept helper used by tests / higher layers.
 	acceptCh chan *Stream
+
+	// nextServerUniStreamID is the ID for the next server-initiated
+	// unidirectional stream we open (RFC 9000 §2.1: server-init uni has
+	// low two bits = 0x3, then increments by 4 — 0x3, 0x7, 0xb, ...).
+	// Used by HTTP/3 for the control stream and (future) QPACK streams.
+	nextServerUniStreamID uint64
 
 	// Flow control (Phase 6). peer* fields hold the client-declared
 	// limits from their transport parameters; local* fields hold our
@@ -131,15 +146,22 @@ func (e *Endpoint) newServerConn(peer net.Addr, clientDCID, clientSCID []byte) (
 		return nil, errors.New("quic: endpoint has no TLS config")
 	}
 	tlsDriver := qtls.NewServer(tlsCfg)
-	// Transport parameters: we only ship a minimal set — original_destination_
-	// connection_id is mandatory on the server. Encoded in RFC 9000 §18.2.
-	tlsDriver.SetTransportParameters(encodeServerTransportParams(clientDCID))
 
 	// Choose our own SCID. Peer will address us by this going forward.
+	// Must be picked *before* encoding transport params — the peer
+	// validates that our initial_source_connection_id equals the SCID
+	// field of the first Initial packet we send (RFC 9000 §7.3).
 	localSCID := make([]byte, LocalConnIDLen)
 	if _, err := e.randRead(localSCID); err != nil {
 		return nil, err
 	}
+
+	// Transport parameters: RFC 9000 §18.2. On the server both
+	// original_destination_connection_id (the DCID of the client's first
+	// Initial) and initial_source_connection_id (our chosen SCID) are
+	// mandatory — getting them swapped trips TRANSPORT_PARAMETER_ERROR
+	// on strict clients (ngtcp2 rejects with ERR_TRANSPORT_PARAM).
+	tlsDriver.SetTransportParameters(encodeServerTransportParams(clientDCID, localSCID))
 
 	cs := &connState{
 		ep:                        e,
@@ -153,6 +175,7 @@ func (e *Endpoint) newServerConn(peer net.Addr, clientDCID, clientSCID []byte) (
 		initialSend:               send,
 		streams:                   make(map[uint64]*Stream),
 		acceptCh:                  make(chan *Stream, 16),
+		nextServerUniStreamID:     0x03,
 		peerParams:                defaultPeerTransportParams(),
 		localMaxData:              localConnFlowWindow,
 		localInitialMaxStreamData: localStreamFlowWindow,
@@ -205,6 +228,33 @@ type Conn struct{ inner *connState }
 // AcceptStream on a Conn forwards to the underlying connection state.
 func (c *Conn) AcceptStream(ctx context.Context) (*Stream, error) {
 	return c.inner.AcceptStream(ctx)
+}
+
+// OpenUniStream opens a new server-initiated unidirectional stream.
+// The returned Stream is send-only; calling Read on it is undefined.
+// Used by HTTP/3 to send the control stream (stream-type 0x00 carrying
+// SETTINGS) and QPACK encoder/decoder streams.
+func (c *Conn) OpenUniStream() (*Stream, error) {
+	return c.inner.openServerUniStream()
+}
+
+func (c *connState) openServerUniStream() (*Stream, error) {
+	c.streamsMu.Lock()
+	defer c.streamsMu.Unlock()
+	id := c.nextServerUniStreamID
+	c.nextServerUniStreamID += 4
+	s := NewStream(id)
+	if c.peerParamsSeen {
+		// initial_max_stream_data_uni governs server-initiated uni.
+		s.SetSendMaxOff(c.peerParams.InitialMaxStreamDataUni)
+	} else {
+		// No peer params yet; open a modest window so the caller can
+		// at least buffer a small control frame. The send loop will
+		// wait on flow control anyway.
+		s.SetSendMaxOff(16 * 1024)
+	}
+	c.streams[id] = s
+	return s, nil
 }
 
 // Flush packs any buffered CRYPTO/STREAM/ACK data into wire packets
@@ -396,6 +446,10 @@ func (c *connState) drainEvents() error {
 				c.outInitialCrypto = append(c.outInitialCrypto, ev.Data...)
 			case qtls.LevelHandshake:
 				c.outHandshakeCrypto = append(c.outHandshakeCrypto, ev.Data...)
+			case qtls.LevelApplication:
+				// Post-handshake messages (NewSessionTicket, KeyUpdate)
+				// arrive here. Packed into 1-RTT packets by flushApp.
+				c.outAppCrypto = append(c.outAppCrypto, ev.Data...)
 			}
 		case qtls.EventHandshakeComplete:
 			c.handshakeComplete = true
@@ -535,6 +589,30 @@ func (c *connState) flushApp() error {
 	if c.handshakeComplete && !c.handshakeDoneSent {
 		payload = frame.AppendHandshakeDone(payload)
 		c.handshakeDoneSent = true
+	}
+	// Issue NewSessionTicket once, the first time we flush after the
+	// handshake completes. 1-RTT resumption: client presents this
+	// ticket on a subsequent Initial and the TLS state machine
+	// short-circuits the cert exchange. 0-RTT stays disabled.
+	if c.handshakeComplete && !c.sessionTicketSent {
+		c.sessionTicketSent = true
+		if err := c.tls.SendSessionTicket(); err == nil {
+			// Drain the resulting QUICWriteData (app level) into
+			// outAppCrypto before we pack the packet below.
+			if derr := c.drainEvents(); derr != nil {
+				return derr
+			}
+		}
+	}
+	// Post-handshake CRYPTO (session tickets, future KeyUpdate). Packed
+	// first so a fresh packet isn't wasted solely on ticket bytes.
+	if len(c.outAppCrypto) > 0 {
+		payload = frame.AppendCrypto(payload, frame.Crypto{
+			Offset: c.cryptoOffsetApp,
+			Data:   c.outAppCrypto,
+		})
+		c.cryptoOffsetApp += uint64(len(c.outAppCrypto))
+		c.outAppCrypto = nil
 	}
 	if c.ackApp && c.seenAppIn {
 		payload = frame.AppendAck(payload, c.pnAppInLargest, c.pnAppInLargest, 0)
@@ -867,7 +945,7 @@ func sealHandshake(p *crypto.PacketProtector, in handshakePacket) ([]byte, error
 //
 // Values are generous for a Phase-3/4 server; real tuning lives with
 // congestion / memory budgeting in Phase 6.
-func encodeServerTransportParams(origDCID []byte) []byte {
+func encodeServerTransportParams(origDCID, localSCID []byte) []byte {
 	appendParam := func(out []byte, id uint64, val []byte) []byte {
 		out = packet.AppendVarint(out, id)
 		out = packet.AppendVarint(out, uint64(len(val)))
@@ -879,8 +957,8 @@ func encodeServerTransportParams(origDCID []byte) []byte {
 	}
 
 	var out []byte
-	out = appendParam(out, 0x00, origDCID) // original_destination_connection_id
-	out = appendParam(out, 0x0f, origDCID) // initial_source_connection_id
+	out = appendParam(out, 0x00, origDCID)  // original_destination_connection_id
+	out = appendParam(out, 0x0f, localSCID) // initial_source_connection_id
 	out = appendVarintParam(out, 0x04, 1<<20) // initial_max_data (1 MiB)
 	out = appendVarintParam(out, 0x05, 1<<16) // initial_max_stream_data_bidi_local
 	out = appendVarintParam(out, 0x06, 1<<16) // initial_max_stream_data_bidi_remote

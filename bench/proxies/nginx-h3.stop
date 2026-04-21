@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+sudo nginx -s quit 2>/dev/null || true
+sleep 0.2

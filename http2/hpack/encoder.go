@@ -101,26 +101,25 @@ func (e *Encoder) AppendIndexedStatus(buf []byte, status int) []byte {
 	return appendLiteral(buf, 0x40, 6, 8, nil, tmp[:n])
 }
 
-// dynFindExact scans the dynamic table for a (name,value) match and returns
-// the 1-based dynamic index, or 0.
+// dynFindExact returns the 1-based dynamic index of an entry matching
+// both name and value, or 0 on miss. Backed by DynamicTable.hashFindExact
+// (open-addressed hash, FNV-1a keyed on name|value), so every header
+// encode pays O(1) expected instead of O(n) over up to dynEntriesCap
+// entries.
 func (e *Encoder) dynFindExact(name, value []byte) int {
-	for i := 1; i <= e.dt.Len(); i++ {
-		n, v, _ := e.dt.Get(i)
-		if bytesEq(n, name) && bytesEq(v, value) {
-			return i
-		}
+	slot := e.dt.hashFindExact(name, value)
+	if slot < 0 {
+		return 0
 	}
-	return 0
+	return e.dt.slotTo1Based(slot)
 }
 
 func (e *Encoder) dynFindName(name []byte) int {
-	for i := 1; i <= e.dt.Len(); i++ {
-		n, _, _ := e.dt.Get(i)
-		if bytesEq(n, name) {
-			return i
-		}
+	slot := e.dt.hashFindName(name)
+	if slot < 0 {
+		return 0
 	}
-	return 0
+	return e.dt.slotTo1Based(slot)
 }
 
 func bytesEq(a, b []byte) bool {

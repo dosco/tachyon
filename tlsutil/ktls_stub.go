@@ -1,16 +1,17 @@
-// Fallback stub for builds without the `ktls` build tag (and for
-// non-Linux builds of the package's syntactic compile). Keeps the
-// public API surface stable so callers don't need their own build tag.
+// Fallback stub for non-Linux builds. Keeps the public API surface
+// stable so callers don't need their own build tag. On Linux, kTLS
+// ships by default (see ktls_linux.go) — this file is not compiled.
 
-//go:build !linux || !ktls
+//go:build !linux
 
 package tlsutil
 
 import "errors"
 
-// ErrKTLSUnavailable is returned by Install when the binary was built
-// without the `ktls` tag (or is running on a non-Linux platform).
-var ErrKTLSUnavailable = errors.New("tlsutil: kTLS not compiled in (build with -tags ktls)")
+// ErrKTLSUnavailable is returned by Install on non-Linux platforms
+// where the TLS kernel offload is unavailable. Callers fall back to
+// userspace TLS.
+var ErrKTLSUnavailable = errors.New("tlsutil: kTLS unavailable on this platform")
 
 // Cipher mirrors the typed enum from the ktls build for API stability.
 type Cipher uint8

@@ -68,10 +68,24 @@ func Serve(nc net.Conn, h Handler) error {
 		recvW:   NewReceiveWindow(int32(defaultInitialWindowSize)),
 		decDT:   hpack.NewDynamicTable(defaultHeaderTableSize),
 		encDT:   hpack.NewDynamicTable(defaultHeaderTableSize),
+		// flushCh is sized 1 on purpose: it's a latch, not a queue.
+		// Multiple stream goroutines signaling flush at the same
+		// time collapse into a single wake of the writer goroutine,
+		// which then flushes exactly once covering everyone's
+		// buffered frames. This is where cross-stream batching
+		// happens: 64 concurrent responses → 1 flush syscall
+		// instead of 64.
+		flushCh: make(chan struct{}, 1),
+		stopCh:  make(chan struct{}),
 	}
 	c.dec = hpack.NewDecoder(c.decDT)
 	c.enc = hpack.NewEncoder(c.encDT)
 	c.flowCond = sync.NewCond(&c.flowMu)
+	// Dedicated writer goroutine owns the bw flush decision. Stream
+	// goroutines still append to bw directly under writeMu, but none
+	// of them calls Flush anymore; they scheduleFlush() and the
+	// writer coalesces.
+	go c.writeLoop()
 	// Unblock any stream goroutines still parked in flowCond.Wait when the
 	// conn tears down — otherwise they'd leak on error/EOF paths.
 	defer func() {
@@ -79,6 +93,7 @@ func Serve(nc net.Conn, h Handler) error {
 		c.closed = true
 		c.flowMu.Unlock()
 		c.flowCond.Broadcast()
+		close(c.stopCh)
 		nc.Close()
 	}()
 	return c.run()
@@ -130,6 +145,15 @@ type conn struct {
 	flowMu   sync.Mutex
 	flowCond *sync.Cond
 	closed   bool
+
+	// flushCh is a 1-deep latch driving the writer goroutine. Stream
+	// goroutines that have buffered frames in bw signal via a
+	// non-blocking send; the writer drains on receive. See writeLoop.
+	flushCh chan struct{}
+	// stopCh closes on Serve return to shut the writer goroutine
+	// down. The writer still performs one final flush so in-flight
+	// RST_STREAM / GOAWAY make it out before nc.Close.
+	stopCh chan struct{}
 }
 
 type streamCtx struct {
@@ -367,10 +391,46 @@ func (c *conn) runStream(st *streamCtx, method, path, authority string, fields [
 		})
 	}
 	_ = w.Close()
-	// Flush batched frames for this stream's response.
-	c.writeMu.Lock()
-	_ = c.bw.Flush()
-	c.writeMu.Unlock()
+	// Signal the writer goroutine to drain the shared bw. It
+	// coalesces with any other concurrent runStream completions so
+	// N simultaneous responses trigger 1 flush syscall, not N.
+	c.scheduleFlush()
+}
+
+// scheduleFlush is a non-blocking nudge for writeLoop. If the latch is
+// already armed (another goroutine already scheduled a flush that
+// hasn't been consumed yet), this is a no-op — that flush will cover
+// our frames too since they're all in the shared bw.
+func (c *conn) scheduleFlush() {
+	select {
+	case c.flushCh <- struct{}{}:
+	default:
+	}
+}
+
+// writeLoop owns the bw.Flush() decision. It wakes on each arm of
+// flushCh, grabs writeMu, and flushes whatever is buffered. Between
+// wakeups, concurrent stream goroutines pile their frames into bw
+// through writeFrame — the writer's next flush sweeps all of them out
+// in one syscall.
+func (c *conn) writeLoop() {
+	for {
+		select {
+		case <-c.stopCh:
+			// Final drain so late GOAWAY / RST_STREAM frames make
+			// it out before nc.Close in the Serve defer.
+			c.writeMu.Lock()
+			_ = c.bw.Flush()
+			c.writeMu.Unlock()
+			return
+		case <-c.flushCh:
+			c.writeMu.Lock()
+			if c.bw.Buffered() > 0 {
+				_ = c.bw.Flush()
+			}
+			c.writeMu.Unlock()
+		}
+	}
 }
 
 // chanReader adapts a channel of byte slices into an io.Reader.

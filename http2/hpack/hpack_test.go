@@ -240,3 +240,82 @@ func TestDynamicTableEvict(t *testing.T) {
 		t.Fatalf("Get(1)=%q,%q,%v", n, v, ok)
 	}
 }
+
+// TestDynamicTableHashIndex exercises the hash index path through Add,
+// evict, and direct lookup. Catches probe-chain bugs that a small-table
+// test wouldn't surface.
+func TestDynamicTableHashIndex(t *testing.T) {
+	dt := NewDynamicTable(4096)
+	for i := 0; i < 100; i++ {
+		name := []byte("x-custom-header-" + string(rune('a'+i%26)) + string(rune('a'+i/26)))
+		value := []byte("value-" + string(rune('a'+i%26)))
+		dt.Add(name, value)
+		// Every insert must be findable by both name and exact match.
+		if slot := dt.hashFindName(name); slot < 0 {
+			t.Fatalf("hashFindName miss after Add #%d (%q)", i, name)
+		}
+		if slot := dt.hashFindExact(name, value); slot < 0 {
+			t.Fatalf("hashFindExact miss after Add #%d (%q,%q)", i, name, value)
+		}
+	}
+
+	// Oldest entries should have been evicted (arena cap = 4096).
+	// A miss on an evicted entry must actually return -1.
+	missing := []byte("x-custom-header-aa")
+	if slot := dt.hashFindName(missing); slot >= 0 {
+		// Only fail if the slot we got back doesn't actually hold
+		// this name — the newer entry might have collided hash-wise
+		// and been placed legitimately.
+		e := dt.entries[slot]
+		got := dt.arena[e.nameOff : e.nameOff+e.nameLen]
+		if string(got) != string(missing) {
+			t.Fatalf("stale hash entry survived eviction: %q -> slot %d (%q)", missing, slot, got)
+		}
+	}
+}
+
+func BenchmarkEncoderDynamicHeavy(b *testing.B) {
+	// With shouldIndex currently limiting inserts to :status /
+	// content-type / server, the dynamic table rarely exceeds a
+	// handful of entries in a real proxy. This benchmark drives a
+	// broader scenario: 8 custom response headers, encoded 100k
+	// times, measuring the per-encode cost through the hash path.
+	dt := NewDynamicTable(4096)
+	enc := NewEncoder(dt)
+	// Warm up the encoder's dynamic table with a few server-ish
+	// entries so the scan path is representative.
+	dt.Add([]byte(":status"), []byte("200"))
+	dt.Add([]byte("content-type"), []byte("application/json"))
+	dt.Add([]byte("server"), []byte("tachyon"))
+
+	names := [][]byte{
+		[]byte(":status"),
+		[]byte("content-type"),
+		[]byte("server"),
+		[]byte("cache-control"),
+		[]byte("x-request-id"),
+		[]byte("vary"),
+		[]byte("access-control-allow-origin"),
+		[]byte("content-length"),
+	}
+	values := [][]byte{
+		[]byte("200"),
+		[]byte("application/json"),
+		[]byte("tachyon"),
+		[]byte("no-cache, private"),
+		[]byte("abc123"),
+		[]byte("Accept-Encoding"),
+		[]byte("*"),
+		[]byte("128"),
+	}
+
+	buf := make([]byte, 0, 512)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf = buf[:0]
+		for j, name := range names {
+			buf = enc.AppendField(buf, name, values[j])
+		}
+	}
+}

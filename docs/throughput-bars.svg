@@ -1,12 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 460" width="920" height="460"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 420" width="920" height="420"
      font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
-  <rect width="920" height="460" fill="#ffffff" rx="10"/>
+  <rect width="920" height="420" fill="#ffffff" rx="10"/>
 
   <text x="30" y="36" font-size="16" fill="#212529" font-weight="700">
     Requests handled per second
   </text>
   <text x="30" y="56" font-size="11" fill="#868e96">
-    16-core Google Cloud machine  ·  higher is better  ·  1 KB responses
+    16-core Google Cloud c4-standard-16  ·  higher is better  ·  1 KB responses  ·  2026-04-21 run
   </text>
 
   <!-- Legend -->
@@ -18,79 +18,66 @@
   <text x="848" y="38" font-size="11" fill="#5f3dc4" font-weight="700">tachyon (Go)</text>
 
   <!-- Scale: 0–220k over x=180..x=870 (690px / 220k = 0.003136 px per req) -->
-  <line x1="180" y1="90" x2="180" y2="420" stroke="#dee2e6" stroke-width="1"/>
-  <line x1="337" y1="90" x2="337" y2="420" stroke="#f1f3f5" stroke-width="1"/>
-  <line x1="493" y1="90" x2="493" y2="420" stroke="#f1f3f5" stroke-width="1"/>
-  <line x1="650" y1="90" x2="650" y2="420" stroke="#f1f3f5" stroke-width="1"/>
-  <line x1="807" y1="90" x2="807" y2="420" stroke="#f1f3f5" stroke-width="1"/>
+  <line x1="180" y1="90" x2="180" y2="380" stroke="#dee2e6" stroke-width="1"/>
+  <line x1="337" y1="90" x2="337" y2="380" stroke="#f1f3f5" stroke-width="1"/>
+  <line x1="493" y1="90" x2="493" y2="380" stroke="#f1f3f5" stroke-width="1"/>
+  <line x1="650" y1="90" x2="650" y2="380" stroke="#f1f3f5" stroke-width="1"/>
+  <line x1="807" y1="90" x2="807" y2="380" stroke="#f1f3f5" stroke-width="1"/>
 
-  <text x="337" y="437" text-anchor="middle" font-size="10" fill="#adb5bd">50k</text>
-  <text x="493" y="437" text-anchor="middle" font-size="10" fill="#adb5bd">100k</text>
-  <text x="650" y="437" text-anchor="middle" font-size="10" fill="#adb5bd">150k</text>
-  <text x="807" y="437" text-anchor="middle" font-size="10" fill="#adb5bd">200k</text>
+  <text x="337" y="397" text-anchor="middle" font-size="10" fill="#adb5bd">50k</text>
+  <text x="493" y="397" text-anchor="middle" font-size="10" fill="#adb5bd">100k</text>
+  <text x="650" y="397" text-anchor="middle" font-size="10" fill="#adb5bd">150k</text>
+  <text x="807" y="397" text-anchor="middle" font-size="10" fill="#adb5bd">200k</text>
 
   <!-- Row 1: Plain HTTP, GET -->
   <text x="170" y="108" text-anchor="end" font-size="12" fill="#212529" font-weight="600">Plain HTTP</text>
-  <text x="170" y="124" text-anchor="end" font-size="10" fill="#868e96">regular GETs</text>
-  <!-- nginx 138,276 => 180 + 138276*0.003136 = 180+434 = 614 -->
-  <rect x="180" y="96" width="434" height="14" rx="2" fill="#ced4da"/>
-  <text x="623" y="107" font-size="10" fill="#495057">138,276</text>
-  <!-- Pingora 146,742 => 180 + 460 = 640 -->
-  <rect x="180" y="112" width="460" height="14" rx="2" fill="#adb5bd"/>
-  <text x="649" y="123" font-size="10" fill="#495057">146,742</text>
-  <!-- tachyon 143,802 (from prior uring-path matrix run) => 180 + 451 = 631 -->
-  <rect x="180" y="128" width="451" height="14" rx="2" fill="#9775fa"/>
-  <text x="640" y="139" font-size="10" fill="#5f3dc4" font-weight="700">143,802</text>
+  <text x="170" y="124" text-anchor="end" font-size="10" fill="#868e96">h2load c=256 n=1M</text>
+  <!-- nginx 129,853 => 180 + 407 = 587 -->
+  <rect x="180" y="96" width="407" height="14" rx="2" fill="#ced4da"/>
+  <text x="596" y="107" font-size="10" fill="#495057">129,853</text>
+  <!-- Pingora 142,116 => 180 + 446 = 626 -->
+  <rect x="180" y="112" width="446" height="14" rx="2" fill="#adb5bd"/>
+  <text x="635" y="123" font-size="10" fill="#495057">142,116</text>
+  <!-- tachyon 135,662 => 180 + 426 = 606 -->
+  <rect x="180" y="128" width="426" height="14" rx="2" fill="#9775fa"/>
+  <text x="615" y="139" font-size="10" fill="#5f3dc4" font-weight="700">135,662</text>
 
   <!-- Row 2: HTTPS (TLS 1.3, HTTP/1.1) -->
   <text x="170" y="178" text-anchor="end" font-size="12" fill="#212529" font-weight="600">HTTPS</text>
   <text x="170" y="194" text-anchor="end" font-size="10" fill="#868e96">TLS 1.3, HTTP/1.1</text>
-  <!-- nginx 96,028 => 180 + 301 = 481 -->
-  <rect x="180" y="166" width="301" height="14" rx="2" fill="#ced4da"/>
-  <text x="490" y="177" font-size="10" fill="#495057">96,028</text>
-  <!-- Pingora: bench script lacks TLS; draw faint placeholder -->
+  <!-- nginx 95,765 => 180 + 300 = 480 -->
+  <rect x="180" y="166" width="300" height="14" rx="2" fill="#ced4da"/>
+  <text x="489" y="177" font-size="10" fill="#495057">95,765</text>
+  <!-- Pingora: bench lacks TLS; draw faint placeholder -->
   <rect x="180" y="182" width="0" height="14" rx="2" fill="#dee2e6"/>
   <text x="188" y="193" font-size="10" fill="#adb5bd">Pingora bench has no TLS setup</text>
-  <!-- tachyon 93,331 => 180 + 293 = 473 -->
-  <rect x="180" y="198" width="293" height="14" rx="2" fill="#9775fa"/>
-  <text x="482" y="209" font-size="10" fill="#5f3dc4" font-weight="700">93,331</text>
+  <!-- tachyon 98,557 => 180 + 309 = 489 -->
+  <rect x="180" y="198" width="309" height="14" rx="2" fill="#9775fa"/>
+  <text x="498" y="209" font-size="10" fill="#5f3dc4" font-weight="700">98,557</text>
 
   <!-- Row 3: HTTPS + HTTP/2 -->
   <text x="170" y="248" text-anchor="end" font-size="12" fill="#212529" font-weight="600">HTTPS + HTTP/2</text>
-  <text x="170" y="264" text-anchor="end" font-size="10" fill="#868e96">multiplexed, c=32 m=10</text>
-  <!-- nginx 210,287 => 180 + 659 = 839 -->
-  <rect x="180" y="236" width="659" height="14" rx="2" fill="#ced4da"/>
-  <text x="848" y="247" font-size="10" fill="#495057">210,287</text>
+  <text x="170" y="264" text-anchor="end" font-size="10" fill="#868e96">multiplexed, kTLS on Linux</text>
+  <!-- nginx 213,593 => 180 + 670 = 850 -->
+  <rect x="180" y="236" width="670" height="14" rx="2" fill="#ced4da"/>
+  <text x="825" y="247" font-size="10" fill="#495057" text-anchor="end">213,593</text>
   <!-- Pingora: n/a -->
   <rect x="180" y="252" width="0" height="14" rx="2" fill="#dee2e6"/>
   <text x="188" y="263" font-size="10" fill="#adb5bd">Pingora bench has no TLS setup</text>
-  <!-- tachyon 169,490 => 180 + 531 = 711 -->
-  <rect x="180" y="268" width="531" height="14" rx="2" fill="#9775fa"/>
-  <text x="720" y="279" font-size="10" fill="#5f3dc4" font-weight="700">169,490</text>
+  <!-- tachyon 215,044 => 180 + 674 = 854 -->
+  <rect x="180" y="268" width="674" height="14" rx="2" fill="#9775fa"/>
+  <text x="829" y="279" font-size="10" fill="#5f3dc4" font-weight="700" text-anchor="end">215,044</text>
 
   <!-- Row 4: Plain POST, small body -->
   <text x="170" y="318" text-anchor="end" font-size="12" fill="#212529" font-weight="600">Small POSTs</text>
   <text x="170" y="334" text-anchor="end" font-size="10" fill="#868e96">1 KB request body</text>
-  <!-- nginx 123,475 => 180 + 387 = 567 -->
-  <rect x="180" y="306" width="387" height="14" rx="2" fill="#ced4da"/>
-  <text x="576" y="317" font-size="10" fill="#495057">123,475</text>
-  <!-- Pingora 126,270 => 180 + 396 = 576 -->
-  <rect x="180" y="322" width="396" height="14" rx="2" fill="#adb5bd"/>
-  <text x="585" y="333" font-size="10" fill="#495057">126,270</text>
-  <!-- tachyon 123,137 => 180 + 386 = 566 -->
-  <rect x="180" y="338" width="386" height="14" rx="2" fill="#9775fa"/>
-  <text x="575" y="349" font-size="10" fill="#5f3dc4" font-weight="700">123,137</text>
-
-  <!-- Row 5: POST large body -->
-  <text x="170" y="388" text-anchor="end" font-size="12" fill="#212529" font-weight="600">Large uploads</text>
-  <text x="170" y="404" text-anchor="end" font-size="10" fill="#868e96">64 KB request body</text>
-  <!-- nginx 33,823 => 180 + 106 = 286 -->
-  <rect x="180" y="376" width="106" height="14" rx="2" fill="#ced4da"/>
-  <text x="295" y="387" font-size="10" fill="#495057">33,823</text>
-  <!-- Pingora 33,237 => 180 + 104 = 284 -->
-  <rect x="180" y="392" width="104" height="14" rx="2" fill="#adb5bd"/>
-  <text x="293" y="403" font-size="10" fill="#495057">33,237</text>
-  <!-- tachyon 34,979 => 180 + 110 = 290 -->
-  <rect x="180" y="408" width="110" height="14" rx="2" fill="#9775fa"/>
-  <text x="299" y="419" font-size="10" fill="#5f3dc4" font-weight="700">34,979</text>
+  <!-- nginx 124,116 => 180 + 389 = 569 -->
+  <rect x="180" y="306" width="389" height="14" rx="2" fill="#ced4da"/>
+  <text x="578" y="317" font-size="10" fill="#495057">124,116</text>
+  <!-- Pingora 122,620 => 180 + 385 = 565 -->
+  <rect x="180" y="322" width="385" height="14" rx="2" fill="#adb5bd"/>
+  <text x="574" y="333" font-size="10" fill="#495057">122,620</text>
+  <!-- tachyon 115,492 => 180 + 362 = 542 -->
+  <rect x="180" y="338" width="362" height="14" rx="2" fill="#9775fa"/>
+  <text x="551" y="349" font-size="10" fill="#5f3dc4" font-weight="700">115,492</text>
 </svg>

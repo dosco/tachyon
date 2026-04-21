@@ -19,8 +19,14 @@ under 1.5 % of throughput. One person, written from scratch.
 
 ![Worst single request seen during each run](docs/p99-burst.svg)
 
-HTTP/3 is in-tree — the QUIC handshake completes against third-party clients,
-but one transport parameter is still rejected, so it's not benchmarkable yet.
+HTTP/3 is in-tree — QUIC handshake completes cleanly against
+third-party clients, server control stream sends `SETTINGS` per
+RFC 9114 §6.2, QPACK dynamic-table decoder is wired (encoder-stream
+inserts, dynamic / post-base references, decoder-stream Section Acks
+and Insert Count Increment), and 1-RTT TLS session resumption lets
+clients skip the cert exchange on reconnect. Throughput numbers are
+pending a working h2load/nghttp3 driver; the protocol path itself is
+green.
 Full numbers for every scenario, honest limitations, and reproduction scripts:
 [BENCHMARK.md](BENCHMARK.md).
 

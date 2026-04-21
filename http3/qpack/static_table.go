@@ -1,15 +1,26 @@
-// Package qpack implements a minimal QPACK (RFC 9204) encoder and
-// decoder suitable for an HTTP/3 server.
+// Package qpack implements a QPACK (RFC 9204) encoder and decoder
+// suitable for an HTTP/3 server.
 //
-// Phase 4 scope:
+// Scope:
 //
-//   - Static table only (dynamic table capacity declared as zero).
-//   - Literal with static-name-reference (Appendix B.1.2) encoding, plus
-//     indexed fields referencing the static table.
-//   - Decoder accepts indexed, literal-name-reference, and literal-with-
-//     raw-name forms. Required-Insert-Count and Base are both always 0.
+//   - Encoder: static-table references only. `Encode` emits indexed
+//     fields for exact static-table matches, literal-with-static-name-
+//     reference for name matches, and literal-with-literal-name
+//     otherwise. Required-Insert-Count and Base are always 0 in the
+//     emitted prefix.
+//   - Decoder: full dynamic-table support. The `Decoder` type
+//     (`dynamic.go`) accepts encoder-stream Insert With Name Ref /
+//     Insert With Literal Name / Set Dynamic Table Capacity /
+//     Duplicate instructions, resolves dynamic + post-base references
+//     in field sections, detects blocked streams per
+//     QPACK_BLOCKED_STREAMS, and emits Section Acknowledgment +
+//     Insert Count Increment + Stream Cancellation on the decoder
+//     stream.
 //
-// Dynamic table, insertion acks, and stream cancellations are Phase 6.
+// Not implemented: dynamic-table insertions on the encoder side
+// (`Encode` stays static-only — outgoing response headers are well
+// covered by the static table) and async blocked-stream handling
+// (callers advertise `QPACK_BLOCKED_STREAMS=0`).
 package qpack
 
 // StaticEntry is one row of the RFC 9204 Appendix A static table.

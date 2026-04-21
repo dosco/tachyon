@@ -20,7 +20,9 @@ package tlsutil
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -44,8 +46,52 @@ type ServerOptions struct {
 	// means no rotation (a single random key for the process lifetime).
 	TicketRotate time.Duration
 
+	// TicketKeySeed, if set, is a 32-byte secret shared across all
+	// SO_REUSEPORT worker processes. Each worker derives the same
+	// session-ticket key set from this seed + the current 12h epoch,
+	// so a client that lands on worker A for its first handshake and
+	// worker B on reconnect still resumes. If nil, each worker picks
+	// its own random key (fine for single-worker dev; ticket-resume
+	// becomes a lottery across a fork-per-core deployment).
+	TicketKeySeed []byte
+
 	// NextProtos. Default []string{"http/1.1"}. Phase 5 adds "h2".
 	NextProtos []string
+}
+
+// TicketEpochSeconds is the rotation period used by DeriveTicketKeys.
+// 12 hours matches what typical TLS deployments use and is the window
+// implied by ServerOptions.TicketRotate=12h.
+const TicketEpochSeconds = 12 * 3600
+
+// DeriveTicketKeys returns a session-ticket key slice deterministically
+// derived from seed, scoped to the current 12-hour rotation epoch plus
+// the two previous epochs. The first slot is the "encrypt" key; the
+// later slots are still accepted for decrypt so resumption doesn't
+// cliff across a rotation boundary.
+//
+// All workers holding the same seed produce the same slice, so tickets
+// issued by any worker resume on any sibling. Call this once at startup
+// and again on each rotation tick.
+func DeriveTicketKeys(seed []byte) [][32]byte {
+	return DeriveTicketKeysAt(seed, uint64(time.Now().Unix())/TicketEpochSeconds)
+}
+
+// DeriveTicketKeysAt is DeriveTicketKeys with an explicit epoch, useful
+// for determinism tests and for the rotator's boundary-crossing logic.
+func DeriveTicketKeysAt(seed []byte, epoch uint64) [][32]byte {
+	out := make([][32]byte, 3)
+	for i := 0; i < 3; i++ {
+		ep := epoch - uint64(i)
+		label := fmt.Sprintf("tachyon-ticket-epoch-%d", ep)
+		k, err := hkdf.Expand(sha256.New, seed, label, 32)
+		if err != nil {
+			// sha256 with 32-byte output can never exceed Expand's limit.
+			panic(fmt.Sprintf("tlsutil: hkdf expand failed: %v", err))
+		}
+		copy(out[i][:], k)
+	}
+	return out
 }
 
 // NewServerConfig builds a *tls.Config ready to pass to tls.NewListener.
@@ -111,11 +157,21 @@ func baseConfig(opt ServerOptions) *tls.Config {
 
 // maybeStartRotator installs a rotating session ticket key on cfg if
 // opt.TicketRotate > 0.
+//
+// Two modes:
+//   - Seeded (opt.TicketKeySeed non-nil): keys are HKDF-derived from the
+//     seed and the current 12h epoch. All workers with the same seed
+//     compute the same keys → cross-worker ticket resume works.
+//   - Random (seed nil): legacy single-process behaviour, each worker
+//     has its own key.
 func maybeStartRotator(cfg *tls.Config, opt ServerOptions) error {
 	if opt.TicketRotate <= 0 {
 		return nil
 	}
 	kr := &keyRotator{cfg: cfg, interval: opt.TicketRotate}
+	if len(opt.TicketKeySeed) > 0 {
+		kr.seedBytes = append([]byte(nil), opt.TicketKeySeed...)
+	}
 	if err := kr.seed(); err != nil {
 		return err
 	}
@@ -131,6 +187,10 @@ type keyRotator struct {
 	cfg      *tls.Config
 	interval time.Duration
 
+	// seedBytes is non-nil in multi-worker mode; keys are derived from
+	// it deterministically so all workers share a key set.
+	seedBytes []byte
+
 	mu       sync.Mutex
 	current  [32]byte
 	previous [32]byte
@@ -138,6 +198,10 @@ type keyRotator struct {
 }
 
 func (k *keyRotator) seed() error {
+	if k.seedBytes != nil {
+		k.cfg.SetSessionTicketKeys(DeriveTicketKeys(k.seedBytes))
+		return nil
+	}
 	if _, err := io.ReadFull(rand.Reader, k.current[:]); err != nil {
 		return fmt.Errorf("tlsutil: seed ticket key: %w", err)
 	}
@@ -149,6 +213,11 @@ func (k *keyRotator) loop() {
 	t := time.NewTicker(k.interval)
 	defer t.Stop()
 	for range t.C {
+		if k.seedBytes != nil {
+			// Deterministic rotation: re-derive for the new epoch.
+			k.cfg.SetSessionTicketKeys(DeriveTicketKeys(k.seedBytes))
+			continue
+		}
 		k.mu.Lock()
 		k.previous = k.current
 		k.hasPrev = true

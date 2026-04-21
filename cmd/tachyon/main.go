@@ -56,6 +56,19 @@ func main() {
 			log.Error("bind intents", "err", err)
 			os.Exit(1)
 		}
+		// Pick (or pick up) the shared TLS session-ticket seed before
+		// forking so every worker inherits the same value via env and
+		// therefore derives identical ticket keys — a ticket issued by
+		// one worker resumes on any sibling.
+		if ensureTicketSeed() == nil {
+			log.Error("ticket seed: rand read failed")
+			os.Exit(1)
+		}
+		// The banner prints the addresses the worker is *configured* to
+		// bind. The worker prints a second, authoritative line after
+		// the listeners have actually bound (see runWorker), so a
+		// misconfiguration or kernel refusal surfaces in the log rather
+		// than being masked by this advisory banner.
 		tlsCfg := cur.TLSConfig()
 		tlsAddr := ""
 		if tlsCfg != nil {
@@ -167,19 +180,11 @@ func runWorker(f flags, idx int, log *slog.Logger) {
 		os.Exit(1)
 	}
 
-	if useUring {
-		_ = ln.Close() // we build our own raw listen fd for uring
-		if err := runUring(cfg, routePrograms, log, f.uringSQPoll, f.spliceMin); err != nil {
-			log.Error("serve", "err", err)
-			os.Exit(1)
-		}
-		return
-	}
-
+	// Build the shared proxy handler BEFORE branching on IO mode. TLS
+	// and QUIC listeners share it with (or in uring mode, serve
+	// alongside) the plaintext path, so it must exist regardless of
+	// which plaintext runtime we pick.
 	h := proxy.NewHandler(router.New(cfg.Routes), upstream.NewPools(cfg.Upstreams), routePrograms)
-	if quicEP != nil {
-		startH3(ctx, quicEP, h, log)
-	}
 	if f.deadlineMode == "perreq" {
 		h.SetStrictDeadlines(true)
 	}
@@ -187,9 +192,18 @@ func runWorker(f flags, idx int, log *slog.Logger) {
 		alog := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 		h.SetAccessLog(alog)
 	}
-	w := &trt.Worker{Listener: ln, Handler: h, Log: log}
 
-	// Optional TLS listener, driven entirely from the compiled TLSConfig.
+	// H3 endpoint runs in its own goroutines independently of the
+	// TCP runtime — there's no reason to skip it on the uring path.
+	if quicEP != nil {
+		startH3(ctx, quicEP, h, log)
+	}
+
+	// TLS listener likewise runs in its own goroutine on the stdlib
+	// event loop. Running it in parallel with uring's plaintext loop
+	// is the whole point of this restructuring: pre-fix the uring
+	// branch would return early (below) and skip this setup entirely,
+	// so :8443 never bound and the banner silently lied.
 	var tw *trt.Worker
 	if tlsCfg != nil && tlsCfg.Addr != "" {
 		var err error
@@ -204,6 +218,31 @@ func runWorker(f flags, idx int, log *slog.Logger) {
 			}
 		}()
 	}
+
+	// Authoritative post-bind banner. Tells the operator exactly what
+	// bound, as opposed to the parent-process banner which reflects
+	// configured intent.
+	logBoundListeners(log, cfg.Listen, useUring, tlsCfg, tw, quicEP)
+
+	if useUring {
+		_ = ln.Close() // we build our own raw listen fd for uring
+		if err := runUring(cfg, routePrograms, log, f.uringSQPoll, f.spliceMin); err != nil {
+			log.Error("serve", "err", err)
+			os.Exit(1)
+		}
+		// uring.Serve currently returns on fatal error only; graceful
+		// shutdown of the uring loop is a separate item. Drain the TLS
+		// worker before exit if it's running.
+		drainCtx, cancel := context.WithTimeout(context.Background(), f.drain)
+		defer cancel()
+		if tw != nil && !tw.Drain(drainCtx) {
+			log.Warn("drain timeout; some TLS requests still in flight", "drain", f.drain)
+		}
+		h.Pools().CloseAll()
+		return
+	}
+
+	w := &trt.Worker{Listener: ln, Handler: h, Log: log}
 
 	if err := w.Serve(ctx); err != nil {
 		log.Error("serve", "err", err)
@@ -221,4 +260,31 @@ func runWorker(f flags, idx int, log *slog.Logger) {
 		log.Warn("drain timeout; some requests still in flight", "drain", f.drain)
 	}
 	h.Pools().CloseAll()
+}
+
+// logBoundListeners emits a single structured log line with the actual
+// addresses each listener succeeded at binding. This is the source of
+// truth for "did TLS and QUIC actually come up" — the parent banner is
+// only a configured-intent summary.
+func logBoundListeners(log *slog.Logger, plain string, useUring bool, tlsCfg *router.TLSConfig, tw *trt.Worker, quicEP *quic.Endpoint) {
+	mode := "stdlib"
+	if useUring {
+		mode = "uring"
+	}
+	attrs := []any{"plain", plain, "plain_io", mode}
+	if tw != nil && tlsCfg != nil {
+		attrs = append(attrs, "tls", tlsCfg.Addr)
+	} else {
+		attrs = append(attrs, "tls", "-")
+	}
+	if quicEP != nil {
+		if p := quicEP.Port(); p != "" {
+			attrs = append(attrs, "h3", ":"+p)
+		} else {
+			attrs = append(attrs, "h3", "bound")
+		}
+	} else {
+		attrs = append(attrs, "h3", "-")
+	}
+	log.Info("listeners bound", attrs...)
 }

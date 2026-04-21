@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Start tachyon with TLS on :8443 (TCP) + QUIC on :8443 (UDP).
+# Shares /tmp/bench-tls.{crt,key} with nginx-tls / nginx-h3.
+set -euo pipefail
+cd ~/tachyon
+pkill -f '^./tachyon' 2>/dev/null || true
+sleep 0.3
+
+# Shared self-signed cert. Generated once; idempotent.
+if [[ ! -f /tmp/bench-tls.crt ]]; then
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+    -keyout /tmp/bench-tls.key -out /tmp/bench-tls.crt \
+    -days 365 -nodes -subj '/CN=bench' 2>/dev/null
+fi
+
+WORKERS=$(nproc)
+setsid nohup ./tachyon \
+  -config bench/intent-h3/ \
+  -workers "$WORKERS" \
+  </dev/null >/tmp/tachyon-h3-bench.log 2>&1 &
+
+# Wait for TCP :8443 to come up; QUIC UDP socket comes up in the same
+# worker boot and we don't have a cheap "ss -lnu" selector for it.
+for _ in $(seq 1 60); do
+  ss -tlnp 2>/dev/null | grep -q ':8443' && exit 0
+  sleep 0.1
+done
+echo "tachyon-h3 did not open :8443" >&2; exit 1

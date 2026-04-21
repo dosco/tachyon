@@ -161,6 +161,23 @@ func (c *Conn) Events() []Event {
 	}
 }
 
+// SendSessionTicket asks the TLS state machine to emit a
+// NewSessionTicket post-handshake message. Must be called only after
+// EventHandshakeComplete has been observed. The resulting bytes arrive
+// via a subsequent QUICWriteData event at LevelApplication; the caller
+// drains with Events() as usual and routes them into a CRYPTO frame
+// inside a 1-RTT packet.
+//
+// EarlyData is hard-coded off. Enabling 0-RTT requires replay
+// protection at the request layer (RFC 8470) which lives outside this
+// driver.
+func (c *Conn) SendSessionTicket() error {
+	if c.closed {
+		return errors.New("quic/tls: conn closed")
+	}
+	return c.q.SendSessionTicket(tls.QUICSessionTicketOptions{EarlyData: false})
+}
+
 // Close shuts the TLS state machine down.
 func (c *Conn) Close() error {
 	c.closed = true

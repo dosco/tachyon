@@ -8,15 +8,13 @@
 //   2. setsockopt(TCP_ULP=tls) is accepted by the kernel.
 //   3. setsockopt(TLS_TX/TLS_RX, ...) is accepted by the kernel.
 //
-// Build: GOOS=linux go build -tags ktls -o ktls_smoke ./tlsutil/ktls_smoke
+// Build: GOOS=linux go build -o ktls_smoke ./tlsutil/ktls_smoke
 // Run on a Linux host with kernel ≥ 4.13 (we need the full kTLS ABI).
 //
-// This file is behind the `ktls` build tag for consistency with the
-// rest of the ktls machinery — but since we call tlsutil.Install
-// directly, the stub build of tlsutil would return ErrKTLSUnavailable
-// and produce a meaningful smoke failure instead of a link error.
+// Linux-only because kTLS is a Linux kernel feature. On other
+// platforms tlsutil.Install returns ErrKTLSUnavailable.
 
-//go:build linux && ktls
+//go:build linux
 
 package main
 

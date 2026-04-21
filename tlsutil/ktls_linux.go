@@ -1,5 +1,6 @@
-// kTLS setsockopt installer. Linux-only, gated behind the `ktls` build
-// tag so stock builds omit the syscall-layout code.
+// kTLS setsockopt installer. Linux-only; ships by default in every
+// Linux build. On kernels that don't expose TLS_TX/TLS_RX, Install
+// returns an error and the caller falls back to userspace TLS.
 //
 // The Linux kTLS ABI is:
 //
@@ -20,7 +21,7 @@
 // exist when this was written). We call SYS_SETSOCKOPT directly with a
 // tiny wrapper.
 
-//go:build linux && ktls
+//go:build linux
 
 package tlsutil
 

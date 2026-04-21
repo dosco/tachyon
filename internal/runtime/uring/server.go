@@ -145,16 +145,23 @@ func (s *Server) Serve(addr string) error {
 	for i := uint32(s.MaxConns); i > 0; i-- {
 		s.freeCh = append(s.freeCh, i-1)
 	}
-	// Per-conn buffers (rdBuf/upRdBuf/wrBuf/cliWrBuf) are lazy: allocSlot
-	// makes them when the slot is claimed, freeSlot nils them for GC.
-	// Eager allocation here pinned ~MaxConns × (2·ReadSlab+2·WriteSlab)
-	// of heap regardless of the actual in-flight conn count.
+	// Per-conn buffers (rdBuf/upRdBuf/wrBuf/cliWrBuf) are pre-allocated
+	// at startup so a cold 512-client burst doesn't pay
+	// 4 × make([]byte, slab) on every accept. The earlier lazy policy
+	// saved heap at rest but landed a GC pause on some unlucky request
+	// during bursts (worst-case p100 ~18 ms vs ~8 ms for nginx/Pingora).
+	// freeSlot keeps the buffers on the slot; allocSlot just resets
+	// cursors.
 	for i := range s.conns {
 		s.conns[i].state = stFree
 		s.conns[i].upFD = -1
 		s.conns[i].routeID = -1
 		s.conns[i].pipeRd = -1
 		s.conns[i].pipeWr = -1
+		s.conns[i].rdBuf = make([]byte, s.ReadSlab)
+		s.conns[i].upRdBuf = make([]byte, s.ReadSlab)
+		s.conns[i].wrBuf = make([]byte, s.WriteSlab)
+		s.conns[i].cliWrBuf = make([]byte, s.WriteSlab)
 	}
 
 	// Arm multishot accept on the listener fd. This SQE stays live —
@@ -265,10 +272,7 @@ func (s *Server) allocSlot() (uint32, bool) {
 	s.freeCh = s.freeCh[:n-1]
 	co := &s.conns[slot]
 	co.seq++ // make any straggler CQE stale
-	co.rdBuf = make([]byte, s.ReadSlab)
-	co.upRdBuf = make([]byte, s.ReadSlab)
-	co.wrBuf = make([]byte, s.WriteSlab)
-	co.cliWrBuf = make([]byte, s.WriteSlab)
+	// Buffers were pre-allocated at slab build; just reset cursors.
 	co.rdFilled = 0
 	co.rdConsumed = 0
 	co.upRdFilled = 0
@@ -310,10 +314,9 @@ func (s *Server) freeSlot(slot uint32) {
 	co.spliceRemaining = 0
 	co.routeID = -1
 	co.clientIP = ""
-	co.rdBuf = nil
-	co.upRdBuf = nil
-	co.wrBuf = nil
-	co.cliWrBuf = nil
+	// Buffers stay on the slot — pre-allocated at slab build, reused
+	// for the next accept. Nilling here would just feed the GC and
+	// reintroduce the cold-burst alloc spike we're avoiding.
 	s.freeCh = append(s.freeCh, slot)
 }
 

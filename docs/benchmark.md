@@ -29,7 +29,7 @@ All pointed at `localhost:9000`, listening on `localhost:8080`:
 - Pingora 0.4 (release + LTO), default config
 - Envoy 1.30 (sanity floor)
 - Traefik 3.1 (sanity floor)
-- tachyon (PGO build: `go build -pgo=auto -tags ktls ./cmd/tachyon`)
+- tachyon (PGO build: `go build -pgo=auto ./cmd/tachyon`; kTLS is on by default on Linux)
 
 ## Scenarios
 
@@ -66,7 +66,7 @@ Each run collects:
 
 - `plain-keep`:  RPS >= 110% Pingora, p99 <= 90% Pingora
 - `h2-small`:    RPS >= 105% Pingora, p99 <= 100% Pingora
-- `tls-small`:   RPS >= 95% Pingora (raises to >= 100% with `-tags ktls`)
+- `tls-small`:   RPS >= 100% Pingora (kTLS is on by default on Linux)
 - all scenarios: p99.9 <= 3x p99 (no GC spike signature)
 
 ## Reproducing

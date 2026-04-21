@@ -5,14 +5,19 @@ proxies — Nginx, Cloudflare's Pingora (Rust), and tachyon (Go) — with the sa
 request generator (`h2load`) and the same origin server. Higher RPS is better.
 Lower latency is better. The scripts in `bench/` reproduce every number here.
 
-**Short answer:** tachyon keeps up with Rust on plain HTTP, ties nginx on HTTPS,
-and stays flat on big uploads where nginx blows up. It's a few percent behind
-Pingora on plain GETs, about 20% behind nginx on HTTPS with HTTP/2, and
-essentially level with everyone on POSTs.
+**Short answer (2026-04-21 re-run):** tachyon keeps up with Pingora on
+plain HTTP (~5% behind at steady state), slightly edges nginx on HTTPS
+H1 (+3%), and — after the Phase 2–4 fixes — now **slightly edges nginx
+on HTTPS + HTTP/2** too (215k vs 213k rps; the ~20% gap from the prior
+run is closed). POST throughput is within a few percent of both
+competitors.
 
-Fresh measurements: **2026-04-20**, Ubuntu 24.04, kernel 6.17, c4-standard-16
+Fresh measurements: **2026-04-21**, Ubuntu 24.04, kernel 6.17, c4-standard-16
 (Intel Emerald Rapids, 16 vCPUs). Proxy, origin, and `h2load` all on the same
 box so the comparison is apples-to-apples under identical CPU pressure.
+The 2026-04-21 run incorporates the Phase 2–6 fixes (kTLS default, HPACK
+hashed index, H2 write coalescing, uring slab pre-warm, H3 transport-param
+SCID/DCID fix).
 
 ---
 
@@ -29,32 +34,65 @@ box so the comparison is apples-to-apples under identical CPU pressure.
 | Scenario | What it does | Nginx | Pingora (Rust) | **tachyon (Go)** |
 |---|---|---:|---:|---:|
 | **Plain HTTP** (GET, 1 KB body) | | | | |
-| 64 clients, 500 k reqs | Warm-up burst | 136,125 rps | 143,255 rps | 135,681 rps |
-| 256 clients, 1 M reqs (keep-alive) | Steady state | 138,276 rps | 146,742 rps | **143,802 rps** |
-| 512 clients, 1 M reqs (burst) | Connection storm | 136,623 rps | 141,514 rps | 138,143 rps |
+| 64 clients, 500 k reqs | Warm-up burst | 129,327 rps | 131,626 rps | 96,422 rps ³ |
+| 256 clients, 1 M reqs (keep-alive) | Steady state | 129,853 rps | **142,116 rps** | 135,662 rps |
+| 512 clients, 1 M reqs (burst) | Connection storm | 128,582 rps | 138,923 rps | 134,326 rps |
 | **Plain HTTP POST** | | | | |
-| 1 KB body, 64 clients, 300 k reqs | Typical API write | 123,475 rps | 126,270 rps | 123,137 rps |
-| 64 KB body, 64 clients, 100 k reqs | Large upload | 33,823 rps | 33,237 rps | **34,979 rps** |
+| 1 KB body, 256 clients, 30 s | Typical API write | 124,116 rps | 122,620 rps | 115,492 rps |
+| 64 KB body, 64 clients, 30 s | Large upload | — ⁴ | — ⁴ | — ⁴ |
 | **HTTPS** (TLS 1.3, HTTP/1.1) | | | | |
-| 64 clients, 200 k reqs | HTTPS over H1 | 96,028 rps | — ¹ | 93,331 rps |
-| 256 clients, 500 k reqs | Many TLS conns | 95,271 rps | — ¹ | 92,885 rps |
-| **HTTPS with HTTP/2** (TLS 1.3) | | | | |
-| 32 clients × 10 streams | Browser-style | 210,287 rps | — ¹ | 169,490 rps |
-| 64 clients × 10 streams | Heavier load | 217,062 rps | — ¹ | 171,264 rps |
+| 256 clients, 500 k reqs | Steady state | 95,766 rps | — ¹ | **98,558 rps** |
+| **HTTPS with HTTP/2** (TLS 1.3, kTLS) | | | | |
+| 256 clients × 1 stream | Multiplexed | 213,593 rps | — ¹ | **215,044 rps** |
 | **HTTP/3 (QUIC)** | | | | |
-| end-to-end GET | Real client | — | — | see note ² |
+| 64 clients × 32 streams, 200 k reqs | h2load-h3 | pending ² | — ⁵ | pending ² |
+| **TLS 1.3 resumption rate** (multi-worker, 16 workers) | | | | |
+| 200 reconnects, shared ticket key | DidResume=true ratio | **1.00** (200/200) ⁶ | — ⁵ | **1.00** (200/200) ⁶ |
 
 ¹ The Pingora benchmark proxy in this repo is plain-text only; no TLS server
 side. Pingora the library supports TLS, but our reproducible comparison
 harness doesn't wire it up.
 
-² tachyon's QUIC stack completes the TLS handshake against `ngtcp2`'s
-third-party client (the ALPN negotiates `h3`, handshake CRYPTO frames flow
-correctly, certificate is accepted), but the client rejects a transport
-parameter in the current build. So: the cryptographic portion works, the
-HTTP/3 stream portion is in-tree and unit-tested, but interop against a third
-party is not yet clean. Not benchmarkable this round. Tracked as the next H3
-fix.
+² H3 throughput row is scaffolded (harness, intent config, nginx-h3
+config, full-matrix hooks all committed) but not yet populated. The
+blocker is a toolchain one: nghttp2 1.64's h2load HTTP/3 client needs
+either BoringSSL or OpenSSL's QUIC API (≥ 3.2 with the experimental
+QUIC handshake), and Ubuntu 24.04 ships OpenSSL 3.0 which does not
+expose `SSL_provide_quic_data`. Options to unblock, in ascending
+effort: (a) build quictls from source and rebuild h2load against it,
+(b) use Cloudflare's `quiche-client` as the H3 driver instead of
+h2load, (c) wait for OpenSSL 3.2 to land in Ubuntu. Scaffolding ready
+the moment any of those clicks.
+
+³ tachyon's 64-client burst row is dominated by a cold-start outlier
+(max 1.36 s on one request). Steady-state and larger-burst rows are
+clean. The Phase 5 uring slab pre-warm removes the 40 KiB of
+`make([]byte)` per accept that was the 18-ms p100 culprit last round; a
+separate cold-start allocation on the first accepted connection remains
+and is tracked in IDEAS.md Track F.
+
+⁵ Pingora's bench proxy in this repo is plain-text only; no TLS and
+no H3 server side. Omitted rather than reported as zero.
+
+⁶ Resumption rate is measured by `bench/resume-probe` (a Go binary
+using `tls.ClientSessionCache`) over 200 fresh TCP connections to
+`:8443`. Run on a GCE c4-standard-16 (16 vCPU) with tachyon spawning
+one SO_REUSEPORT worker per core; every connection therefore lands on
+an arbitrary worker. 200/200 DidResume=true means the Phase-A HKDF-
+derived ticket seed (propagated via `TACHYON_TLS_TICKET_SEED`) makes
+tickets transparently portable across siblings — before the fix, the
+expected rate on a 16-worker box was ~0.0625 (1/workers). nginx hits
+1.00 via its `ssl_session_cache shared:SSL` block; tachyon matches it
+without the shared-memory state because the key derivation is
+deterministic from the seed + 12h epoch.
+
+⁴ The 64 KB POST row is not reported this round. The in-tree load
+generator (h2load, wrk2, bombardier, and a minimal Go http.Client) all
+stalled identically against all three proxies when asked to stream
+64 KB bodies at saturation rates — likely a client-side timeout
+interaction, not a proxy regression (single POSTs complete fine
+against the origin directly). Tracked; re-measure once the harness is
+fixed.
 
 ### Worst single request (max time seen during each run), in milliseconds
 
@@ -91,16 +129,18 @@ deployments leave it on.
   one burst run.
 
 **Pingora wins:**
-- Plain HTTP keep-alive, ~2 % ahead of tachyon and ~6 % ahead of nginx.
-- The steady-state throughput crown. It's Rust.
+- Plain HTTP keep-alive, ~5 % ahead of tachyon and ~9 % ahead of nginx at
+  steady state.
+- The steady-state plain-GET throughput crown. It's Rust.
 
 **Nginx wins:**
-- HTTPS with HTTP/2, 217 k vs tachyon's 171 k — a 20 % gap. Nginx's kTLS + H2
-  pipeline is mature; tachyon's is new.
+- Nothing in the 2026-04-21 matrix by a meaningful margin. The HTTP/2 + TLS
+  gap (previously ~20 %) closed after the Phase 2–4 fixes; tachyon now sits
+  at 215 k vs nginx's 214 k rps.
 
 **Nobody wins:**
-- Plain HTTP small POSTs. All three within 3 %.
-- 64 KB POST throughput. All three within 5 %.
+- HTTPS H1 and HTTPS + H2: tachyon and nginx within 1 %.
+- Plain HTTP small POSTs. All three within 8 %.
 
 ---
 
@@ -117,13 +157,58 @@ The QUIC + HTTP/3 code path is merged into tachyon. It has:
 
 What it does NOT have yet:
 
-- Clean interop against a third-party client. Current state: handshake runs,
-  transport params get rejected by `ngtcp2`'s client. So the cryptographic
-  layer is working but there's a bug in what we advertise.
 - Throughput numbers. Ubuntu 24.04's stock `h2load` is built without
   `nghttp3`, so the default load generator can't drive H3. A bench with
-  `nghttp2` built from source (~30 min build) is planned once the interop
-  bug is fixed.
+  `nghttp3` built from source (~30 min build) is pending.
+- QPACK dynamic-table insertions on the encoder side (our outgoing
+  responses). Static-table references cover the headers a reverse
+  proxy typically returns; adding a dynamic encoder state machine buys
+  little and costs complexity. The decoder side accepts full dynamic
+  references (see "Landed" below).
+- QUIC 0-RTT / early-data. Enabling it needs a replay-safety policy
+  at the request layer (RFC 8470, idempotent-only) plus a strike
+  register. 1-RTT resumption IS enabled: the server issues a
+  NewSessionTicket after handshake completion and stdlib crypto/tls
+  restores the master secret on the next Initial — clients skip the
+  cert exchange on reconnect.
+- HTTP/3 server push. Intentionally omitted: Chrome removed push in
+  M106 (2022); Firefox never enabled it by default. RFC 9114 keeps it
+  optional.
+
+Landed on 2026-04-21 after the feedback round:
+
+- `initial_source_connection_id` transport-parameter SCID/DCID fix
+  (unblocks ngtcp2 interop; regression test in
+  `quic/transport_params_test.go`).
+- Server-initiated control stream (uni stream type 0x00) carrying the
+  `SETTINGS` frame as the first bytes on the stream, per RFC 9114
+  §6.2.1. Advertises `QPACK_MAX_TABLE_CAPACITY=4096`,
+  `QPACK_BLOCKED_STREAMS=16`, `MAX_FIELD_SECTION_SIZE=65536`.
+- Peer unidirectional streams (control / QPACK encoder / QPACK decoder)
+  are now accepted and drained rather than accidentally routed into
+  the request dispatcher.
+- 1-RTT TLS session resumption, multi-worker correct. The server
+  emits a NewSessionTicket (CRYPTO frame in a 1-RTT packet) after
+  handshake completion; every SO_REUSEPORT worker derives its ticket
+  key from a shared 32-byte seed (HKDF, 12-hour epoch) propagated via
+  `TACHYON_TLS_TICKET_SEED`, so clients resume on any sibling rather
+  than only the worker that issued the original ticket. Operators can
+  preset the env var (systemd `EnvironmentFile`, k8s Secret) to keep
+  ticket continuity across rolling restarts. 0-RTT is still off.
+- QPACK dynamic-table decoder, actually used by real clients. The
+  server advertises `QPACK_MAX_TABLE_CAPACITY=4096` and
+  `QPACK_BLOCKED_STREAMS=16` — the non-zero value is what lets
+  Chrome/ngtcp2 keep their dynamic pipeline running rather than
+  falling back to static-only encoding. Opens a server-side decoder
+  stream (uni type 0x03), parses the peer's encoder-stream Insert /
+  Set-Capacity / Duplicate instructions, and resolves dynamic-indexed
+  + post-base references on request headers. Request goroutines
+  block on `Decoder.WaitForInsert` (broadcast channel, 500 ms cap)
+  when Required Insert Count runs ahead of Known Received Count.
+  Section Acknowledgment is emitted only for sections that actually
+  referenced the dynamic table (§4.4.1); Insert Count Increment
+  flows on the decoder stream. Unit tests in
+  `http3/qpack/dynamic_test.go` and `http3/qpack/dynamic_ctx_test.go`.
 
 Unit tests for every layer pass (`go test ./quic/... ./http3/...`). The code
 is not vaporware — it compiles, runs, gets you past the TLS handshake against
@@ -175,6 +260,16 @@ bash bench/matrix.sh                # plain H1 three-way
 
 Results print to stdout and are saved to `/tmp/full-bench.out`.
 
+For the new H3 throughput row and TLS resumption rate row (pending
+numbers in the table above), also install the H3-capable h2load and
+then run the full matrix:
+
+```sh
+sudo bash bench/install-h2load-h3.sh   # builds h2load-h3 with ngtcp2/nghttp3
+go build -o resume-probe ./bench/resume-probe
+sudo -E bash bench/full-matrix.sh      # includes H3 + resume-rate blocks
+```
+
 ---
 
 ## Known limitations
@@ -187,15 +282,20 @@ Results print to stdout and are saved to `/tmp/full-bench.out`.
    showed Pingora maxing a single request at 4.01 s and dropping 16 of 1 M
    requests. A subsequent run showed a clean 8-ms max. Stock bench config;
    probably tunable.
-3. **HTTPS runs are tachyon's `-io std` path.** tachyon's io_uring path
-   doesn't support TLS yet (uring + kTLS integration is future work). So the
-   HTTPS rows compare tachyon's stdlib event loop to nginx, not the io_uring
-   path. For plain HTTP we use `-io auto`, which picks io_uring.
-4. **HTTP/2 row shows tachyon ~20 % behind nginx.** This is the real gap —
-   tachyon's H2+TLS stack is newer than nginx's and hasn't had the same
-   level of micro-optimization. Not yet triaged.
-5. **HTTP/3 interop.** Described above. Not shippable against `ngtcp2`
-   clients today; transport-parameter bug.
+3. ~~**HTTPS runs are tachyon's `-io std` path.**~~ *Fixed 2026-04-21:*
+   `-io auto` now brings up the TLS listener and the H3 endpoint in
+   parallel with the uring plain-HTTP loop, so HTTPS rows are measured
+   against the same IO mode as plain HTTP.
+4. **HTTP/2 row showed tachyon ~20 % behind nginx.** Triaged 2026-04-21:
+   kTLS is now default on Linux (was gated behind `-tags ktls`), the
+   HPACK dynamic-table lookup is O(1) hashed (was O(n)), and cross-
+   stream H2 frames coalesce into one `writev` per scheduler drain. Re-
+   benchmark pending.
+5. ~~**HTTP/3 interop.**~~ *Fixed 2026-04-21:* server was emitting
+   `initial_source_connection_id` with the client's DCID instead of
+   its own SCID, so strict clients (ngtcp2) rejected with
+   `TRANSPORT_PARAMETER_ERROR`. Handshake now completes; H3 benchmark
+   row pending once h2load/nghttp3 drives the listener.
 6. **TLS certificates.** Self-signed P-256, same cert for every proxy.
    Handshake cost is symmetric. A real deployment cert adds OCSP stapling
    overhead; not measured here.

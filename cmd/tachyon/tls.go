@@ -69,9 +69,9 @@ func (r *tlsReloader) Reload(certFile, keyFile string) error {
 // demux per-conn NSS lines because ClientHelloInfo.Random isn't
 // exported from crypto/tls.
 //
-// On builds without `-tags ktls`, tlsutil.Install returns an error and
-// we fall through to userspace TLS (the legacy path). The wiring is
-// identical either way.
+// If the kernel doesn't support TLS_TX/TLS_RX (old kernel, unsupported
+// cipher), tlsutil.Install returns an error and we fall through to
+// userspace TLS. The wiring is identical either way.
 //
 // ALPN negotiates "h2" or "http/1.1". Both share router + pools with
 // the plaintext handler.
@@ -84,8 +84,9 @@ func startTLSWorker(cfg *router.TLSConfig, h *proxy.Handler, log *slog.Logger, i
 		return nil, nil, err
 	}
 	base, err := tlsutil.NewServerConfigWithGetCert(tlsutil.ServerOptions{
-		TicketRotate: 12 * time.Hour,
-		NextProtos:   []string{"h2", "http/1.1"},
+		TicketRotate:  12 * time.Hour,
+		TicketKeySeed: readTicketSeed(),
+		NextProtos:    []string{"h2", "http/1.1"},
 	}, reloader.get)
 	if err != nil {
 		return nil, nil, err
@@ -181,8 +182,8 @@ func serveOverKTLS(tc *tls.Conn, state tls.ConnectionState, cap *tlsutil.Capture
 		installErr = tlsutil.Install(int(fd), cipher, secrets)
 	})
 	if ctrlErr != nil || installErr != nil {
-		// Don't spam on every handshake in the stub-build case; log
-		// once at debug level.
+		// Log at debug level; on kernels that don't support TLS_TX
+		// this fires on every handshake and would spam the log.
 		if log != nil {
 			log.Debug("ktls install skipped",
 				"cipher", cipher, "ctrl_err", ctrlErr, "install_err", installErr)
