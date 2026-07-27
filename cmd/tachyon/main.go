@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/pprof"
 	"strconv"
 
 	"tachyon/buf"
+	"tachyon/internal/intent"
 	cur "tachyon/internal/intent/generated/current"
+	irt "tachyon/internal/intent/runtime"
 	"tachyon/internal/proxy"
 	"tachyon/internal/router"
 	trt "tachyon/internal/runtime"
@@ -120,14 +123,7 @@ func runWorker(f flags, idx int, log *slog.Logger) {
 		}()
 	}
 
-	cfg := cur.LoadConfig()
-	tlsCfg := cur.TLSConfig()
-	quicCfg := cur.QUICConfig()
-	routePrograms, err := cur.BuildRoutePrograms(cfg.Routes)
-	if err != nil {
-		log.Error("bind intents", "err", err)
-		os.Exit(1)
-	}
+	cfg, tlsCfg, quicCfg, routePrograms := loadRuntimeConfig(log, f.config)
 
 	ln, err := trt.Listen(cfg.Listen)
 	if err != nil {
@@ -260,6 +256,120 @@ func runWorker(f flags, idx int, log *slog.Logger) {
 		log.Warn("drain timeout; some requests still in flight", "drain", f.drain)
 	}
 	h.Pools().CloseAll()
+}
+
+// loadRuntimeConfig parses .intent files at startup, falling back to
+// compiled defaults if none are found.
+func loadRuntimeConfig(log *slog.Logger, configDir string) (*router.Config, *router.TLSConfig, *router.QUICConfig, irt.RoutePrograms) {
+	paths, err := filepath.Glob(filepath.Join(configDir, "*.intent"))
+	if err != nil || len(paths) == 0 {
+		log.Warn("no .intent files, using compiled defaults", "dir", configDir)
+		cfg := cur.LoadConfig()
+		progs, _ := cur.BuildRoutePrograms(cfg.Routes)
+		return cfg, cur.TLSConfig(), cur.QUICConfig(), progs
+	}
+
+	bundle, err := intent.ParseFiles(paths)
+	if err != nil {
+		log.Error("parse intents", "err", err)
+		os.Exit(1)
+	}
+
+	cfg := bundleToConfig(bundle)
+	tlsCfg := bundleTLSConfig(bundle)
+	quicCfg := bundleQUICConfig(bundle)
+	programs := bundleToPrograms(bundle)
+
+	log.Info("config loaded from intents", "routes", len(cfg.Routes), "pools", len(cfg.Upstreams))
+	return cfg, tlsCfg, quicCfg, programs
+}
+
+func bundleTLSConfig(b intent.Bundle) *router.TLSConfig {
+	if b.TLS == nil {
+		return nil
+	}
+	return &router.TLSConfig{Addr: b.TLS.Addr, Cert: b.TLS.Cert, Key: b.TLS.Key}
+}
+
+func bundleQUICConfig(b intent.Bundle) *router.QUICConfig {
+	if b.QUIC == nil {
+		return nil
+	}
+	return &router.QUICConfig{Addr: b.QUIC.Addr, Cert: b.QUIC.Cert, Key: b.QUIC.Key, ALPN: b.QUIC.ALPN}
+}
+
+// bundleToConfig converts a parsed intent bundle into a router.Config.
+func bundleToConfig(b intent.Bundle) *router.Config {
+	cfg := &router.Config{
+		Listen:    b.Listener.Addr,
+		Routes:    make([]router.Rule, len(b.Routes)),
+		Upstreams: make(map[string]router.Upstream, len(b.Pools)),
+	}
+	if cfg.Listen == "" {
+		cfg.Listen = ":8080"
+	}
+	for i, r := range b.Routes {
+		cfg.Routes[i] = router.Rule{
+			Name:     r.Name,
+			Host:     r.Host,
+			Path:     r.Path,
+			Upstream: r.Upstream,
+			Intents:  r.Apply,
+			RouteID:  i,
+		}
+	}
+	for _, p := range b.Pools {
+		cfg.Upstreams[p.Name] = router.Upstream{
+			Addrs:          p.Addrs,
+			IdlePerHost:    p.IdlePerHost,
+			ConnectTimeout: p.ConnectTimeout,
+			LBPolicy:       p.LBPolicy,
+			OutlierDetection: p.OutlierDetection,
+			HealthCheck:    p.HealthCheck,
+			RetryBudget:    p.RetryBudget,
+		}
+	}
+	return cfg
+}
+
+// bundleToPrograms converts a parsed intent bundle to route programs.
+func bundleToPrograms(b intent.Bundle) irt.RoutePrograms {
+	policies := make(map[string]irt.PolicyMeta, len(b.Policies))
+	for _, p := range b.Policies {
+		reqClassC := false
+		for _, a := range p.Request {
+			if a.Kind == irt.ActionAuthExternal {
+				reqClassC = true
+				break
+			}
+		}
+		policies[p.Name] = irt.PolicyMeta{
+			Name:           p.Name,
+			Priority:       p.Priority,
+			Match:          p.Match,
+			Request:        p.Request,
+			Response:       p.Response,
+			Error:          p.Error,
+			RequiresClassC: reqClassC,
+		}
+	}
+	reg := irt.Registry{Version: b.Version, Policies: policies}
+	rules := make([]router.Rule, len(b.Routes))
+	for i, r := range b.Routes {
+		rules[i] = router.Rule{
+			Name:     r.Name,
+			Host:     r.Host,
+			Path:     r.Path,
+			Upstream: r.Upstream,
+			Intents:  r.Apply,
+			RouteID:  i,
+		}
+	}
+	programs, err := irt.BindRoutes(rules, reg)
+	if err != nil {
+		return irt.EmptyRoutePrograms()
+	}
+	return programs
 }
 
 // logBoundListeners emits a single structured log line with the actual
